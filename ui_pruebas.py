@@ -13,6 +13,7 @@ from prueba_config import get_realesrgan_path, get_models_path
 from config.Process.video_converter import convertir_frames_a_video
 from config.Process.image_processor import mejorar_imagen 
 from config.Process.frame_processor import mejorar_frames, extraer_frames
+
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
     using_dnd = True
@@ -29,6 +30,8 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         self.queue = Queue()
         self.processing_thread = None
         self.is_processing = False
+        self.frames_mejorados = []
+        self.video_generado = False
 
     def run_in_background(self, target, args=(), callback=None):
         """Ejecuta una función en segundo plano"""
@@ -356,7 +359,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
     def _procesar_video(self, directorio_salida):
         directorio_temp = os.path.join(directorio_salida, "temp_frames")
         os.makedirs(directorio_temp, exist_ok=True)
-        archivo_salida = os.path.join(directorio_salida,
+        self.archivo_salida = os.path.join(directorio_salida,
                                     f"{Path(self.archivo_seleccionado).stem}_mejorado.mp4")
         try:
             # Proceso secuencial de video
@@ -377,7 +380,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             self.label_estado.configure(text="Creando video final...")
             convertir_frames_a_video(
                 self.archivo_seleccionado, 
-                archivo_salida,
+                self.archivo_salida,
                 directorio_temp, 
                 self.barra_progreso, 
                 self.finalizar_mejora
@@ -454,3 +457,54 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             messagebox.showinfo("Éxito", f"Imagen mejorada guardada en:\n{archivo_salida}")
         except Exception as e:
             self._handle_error(str(e))
+            
+    def iniciar_mejora(self):
+        try:
+            # Lógica para procesar y mejorar imágenes
+            self.procesar_frames()
+        except Exception as e:
+            print(f"Error durante la mejora: {e}")
+        finally:
+            # Llamar al método 'finalizar_mejora'
+            self.finalizar_mejora()
+
+    def procesar_frames(self):
+        # Aquí se realiza el procesamiento de los frames
+        print("Procesando frames...")
+        # Simular que el procesamiento ocurre correctamente
+        self.frames_mejorados = ["frame1.png", "frame2.png"]  # Ejemplo
+
+        # Generar video después de procesar
+        self.generar_video_mejorado()
+
+    def generar_video_mejorado(self):
+        try:
+            if not self.frames_mejorados:
+                raise ValueError("No hay frames mejorados para generar el video.")
+
+            # Lógica para combinar los frames en un video
+            print("Generando video mejorado...")
+            self.video_generado = True
+        except Exception as e:
+            print(f"Error al generar el video: {e}")
+
+    def finalizar_mejora(self):
+        # Método que se llama al finalizar todo el proceso
+        ruta_video = getattr(self, 'archivo_salida', 'Video no generado')
+        
+        mensaje_exito = f"""
+    Proceso de Mejora Completado ✅
+    --------------------------------
+    Archivo de salida: {ruta_video}
+    Modelo utilizado: {self.modelo_var.get()}
+    Escala de mejora: {self.var_escala.get()}x
+        """
+        
+        # Actualizar label de estado con mensaje de éxito
+        self.label_estado.configure(text="Mejora finalizada con éxito")
+        
+        # Opcional: Mostrar mensaje emergente
+        messagebox.showinfo("Proceso Completado", mensaje_exito)
+        
+        # Limpiar recursos o realizar acciones adicionales
+        print(mensaje_exito)

@@ -1,22 +1,57 @@
-#video_converter
-from asyncio.log import logger
-from moviepy import ImageSequenceClip, VideoFileClip
+import logging
 import cv2
 import glob
 import os
 import gc
 import torch
+from moviepy import VideoFileClip, ImageSequenceClip
 from .video_processor import ProcesadorVideo
 
-def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, barra_progreso, callback_finalizar):
+logger = logging.getLogger(__name__)
+
+def convertir_frames_a_video(
+    archivo_entrada, 
+    archivo_salida, 
+    directorio_temp, 
+    barra_progreso=None, 
+    callback_finalizar=None,
+    verbose=False
+):
     """
-    Convierte los frames mejorados en un video manteniendo el audio original.
+    Convierte los frames mejorados en un video manteniendo el audio original con mejoras en manejo de errores y recursos.
+    
+    Mejoras implementadas:
+    - Gestión robusta de recursos
+    - Manejo detallado de errores
+    - Optimización de procesamiento de video
+    
+    Args:
+        archivo_entrada (str): Ruta del video original
+        archivo_salida (str): Ruta del video de salida
+        directorio_temp (str): Directorio con los frames mejorados
+        barra_progreso (optional): Objeto para actualizar progreso
+        callback_finalizar (optional): Función a llamar al finalizar
+        verbose (optional): Modo detallado para más información de logging
     """
+    video_original = None
+    clip = None
+    clip_final = None
+
     try:
+        # Configuración de logging mejorada
+        logging.getLogger('moviepy').setLevel(logging.ERROR)
+        logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+
+        # Validación de archivos de entrada
+        if not os.path.exists(archivo_entrada):
+            raise FileNotFoundError(f"El archivo de video de entrada no existe: {archivo_entrada}")
+
+        # Obtener lista de imágenes mejoradas con manejo de errores
         imagenes = sorted(glob.glob(os.path.join(directorio_temp, "enhanced_frame_*.png")))
         if not imagenes:
             raise FileNotFoundError("No se encontraron imágenes mejoradas para procesar")
-        
+
+        # Obtención de metadatos de video con manejo de errores
         cap = cv2.VideoCapture(archivo_entrada)
         if not cap.isOpened():
             raise Exception(f"No se pudo abrir el archivo de video: {archivo_entrada}")
@@ -28,8 +63,8 @@ def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, b
         
         video_original = VideoFileClip(archivo_entrada)
         if video_original.audio is not None:
-            clip = clip.set_audio(video_original.audio)
-            clip = clip.set_duration(video_original.audio.duration)
+            clip = clip.with_audio(video_original.audio)
+            clip = clip.with_duration(video_original.audio.duration)
         
         configuracion_codec = ProcesadorVideo.obtener_codec_optimal()
         
@@ -45,11 +80,42 @@ def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, b
         barra_progreso.set(0.9)
         if callback_finalizar:
             callback_finalizar()
+        logger.info(f"Video generado exitosamente: {archivo_salida}")
 
-    except Exception as e:
-        logger.error(f"Error al crear video: {e}")
+    except Exception as error_general:
+        logger.error(f"Error crítico en procesamiento de video: {error_general}")
         raise
+    
     finally:
+        # Liberación segura y exhaustiva de recursos
+        def liberar_recurso(recurso):
+            try:
+                if recurso:
+                    recurso.close()
+            except Exception as error_recurso:
+                logger.warning(f"Error liberando recurso: {error_recurso}")
+
+        liberar_recurso(clip)
+        liberar_recurso(video_original)
+        liberar_recurso(clip_final)
+        
+        # Gestión de memoria optimizada
         gc.collect()
+        
+        # Limpieza de memoria de GPU
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            try:
+                with torch.cuda.device('cuda'):
+                    torch.cuda.empty_cache()
+            except Exception as error_gpu:
+                logger.warning(f"Error limpiando caché de GPU: {error_gpu}")
+
+# Configuración de logging global con mejoras
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('procesamiento_video.log', encoding='utf-8', mode='a')
+    ]
+)

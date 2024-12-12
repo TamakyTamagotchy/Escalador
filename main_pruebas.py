@@ -8,4 +8,3 @@ if __name__ == "__main__":
     app = AplicacionMejoradorVideo()
     app.mainloop()
     logging.info('Aplicación finalizada')
-

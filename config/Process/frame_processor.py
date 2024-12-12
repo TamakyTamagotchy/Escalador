@@ -1,12 +1,14 @@
-from asyncio.log import logger
-import gc
-import glob
-import cv2
+#frame_processor
 import os
+import glob
+import gc
+from asyncio.log import logger
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import torch
+import cv2
 from config.config import Configuracion
-from .video_processor import procesar_lote_frames
+from config.models_config import ConfiguracionModelos
+from .video_processor import ProcesadorVideo
 
 def extraer_frames(archivo_seleccionado, directorio_temp, barra_progreso, after):
     cap = cv2.VideoCapture(archivo_seleccionado)
@@ -35,10 +37,30 @@ def extraer_frames(archivo_seleccionado, directorio_temp, barra_progreso, after)
     
     cap.release()
 
-def mejorar_frames(directorio_temp, ruta_realesrgan, ruta_modelos, barra_progreso, escala, modelo="realesr-animevideov3"):
+def mejorar_frames(
+    directorio_temp, 
+    ruta_realesrgan, 
+    ruta_modelos, 
+    barra_progreso, 
+    escala, 
+    modelo=None
+):
     """
     Mejora los frames usando procesamiento por lotes y GPU.
     """
+    # Validar y configurar el modelo
+    modelos_disponibles = ConfiguracionModelos.listar_modelos_disponibles()
+    
+    if not modelo:
+        # Usar un modelo predeterminado si no se especifica
+        modelo = modelos_disponibles[0] if modelos_disponibles else None
+    
+    if not modelo or modelo not in modelos_disponibles:
+        raise ValueError(f"Modelo no válido. Modelos disponibles: {modelos_disponibles}")
+    
+    # Logging de información de modelo
+    logger.info(f"Usando modelo de mejora: {modelo}")
+    
     directorio_temp = os.path.normpath(directorio_temp)
     ruta_realesrgan = os.path.normpath(ruta_realesrgan)
     ruta_modelos = os.path.normpath(ruta_modelos)
@@ -64,7 +86,7 @@ def mejorar_frames(directorio_temp, ruta_realesrgan, ruta_modelos, barra_progres
     
     max_workers = min(Configuracion.MAXIMO_HILOS, len(lotes))
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(procesar_lote_frames, args): i 
+        futures = {executor.submit(ProcesadorVideo.procesar_lote_frames, args): i 
                 for i, args in enumerate(lote_args)}
         
         for future in as_completed(futures):
