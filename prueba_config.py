@@ -29,7 +29,7 @@ class ConfigHandler:
     """Clase para manejar la configuración y verificación de modelos"""
     
     # Rutas base
-    BASE_PATH = r"D:\Escritorio\Carpetas con cosas\Programas\realesrgan-ncnn-vulkan"
+    BASE_PATH = r"Ruta del archivo en donde esta el ejecutable"
     EXECUTABLE_PATH = os.path.join(BASE_PATH, "realesrgan-ncnn-vulkan.exe")
     MODELS_PATH = os.path.join(BASE_PATH, "models")
 
