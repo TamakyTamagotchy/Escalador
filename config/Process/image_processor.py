@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import gc
 import torch
-from typing import List, Callable, Optional
+from typing import Callable, Optional
 import pathlib
 
 logging.basicConfig(
@@ -138,3 +138,4 @@ def mejorar_imagen(
 
     logger.error(f"Procesamiento fallido para {archivo_entrada}")
     return False
+
