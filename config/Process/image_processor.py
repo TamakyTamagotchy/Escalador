@@ -134,3 +134,4 @@ def mejorar_imagen(archivo_entrada,archivo_salida,ruta_realesrgan, ruta_modelos:
 
     logger.error(f"Procesamiento fallido para {archivo_entrada}")
     return False
+
