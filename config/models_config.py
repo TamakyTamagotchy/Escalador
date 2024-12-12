@@ -52,14 +52,6 @@ class ConfiguracionModelos:
             permite_escala_personalizada=True,
             parametros_gpu={'tile_size': 0},
             tipos_contenido=['anime', 'video']
-        ),
-        'realesrnet-x4plus': ModeloConfig(
-            nombre='realesrnet-x4plus',
-            descripcion='Red de mejora de calidad',
-            escala_predeterminada=4,
-            permite_escala_personalizada=True,
-            parametros_gpu={'tile_size': 0},
-            tipos_contenido=['fotografías', 'texturas']
         )
     }
 

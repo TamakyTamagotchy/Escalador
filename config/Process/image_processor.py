@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import gc
 import torch
-from typing import List, Callable, Optional
+from typing import Callable, Optional
 import pathlib
 
 logging.basicConfig(
@@ -41,11 +41,7 @@ def validate_image(image_path: str) -> bool:
         logger.error(f"Error validando imagen {image_path}: {e}")
         return False
 
-def mejorar_imagen(
-    archivo_entrada: str, 
-    archivo_salida: str, 
-    ruta_realesrgan: str, 
-    ruta_modelos: str, 
+def mejorar_imagen(archivo_entrada,archivo_salida,ruta_realesrgan, ruta_modelos: str, 
     escala: int = 4, 
     modelo: str = "realesrgan-x4plus", 
     usar_cpu: bool = False,

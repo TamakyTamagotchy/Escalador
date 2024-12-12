@@ -37,14 +37,7 @@ def extraer_frames(archivo_seleccionado, directorio_temp, barra_progreso, after)
     
     cap.release()
 
-def mejorar_frames(
-    directorio_temp, 
-    ruta_realesrgan, 
-    ruta_modelos, 
-    barra_progreso, 
-    escala, 
-    modelo=None
-):
+def mejorar_frames(directorio_temp, ruta_realesrgan, ruta_modelos, barra_progreso, escala, modelo=None):
     """
     Mejora los frames usando procesamiento por lotes y GPU.
     """

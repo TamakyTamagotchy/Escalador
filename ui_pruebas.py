@@ -98,7 +98,6 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         # Configuración de modelos
         self.modelos_disponibles = {
             "realesr-animevideov3": [2, 3, 4],
-           # "realesrgan-x4plus": [4],
             "realesrgan-x4plus-anime": [4],
            # "ultrasharp": [4],
            # "ultramix_balanced": [4],

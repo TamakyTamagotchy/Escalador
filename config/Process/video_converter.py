@@ -9,14 +9,8 @@ from .video_processor import ProcesadorVideo
 
 logger = logging.getLogger(__name__)
 
-def convertir_frames_a_video(
-    archivo_entrada, 
-    archivo_salida, 
-    directorio_temp, 
-    barra_progreso=None, 
-    callback_finalizar=None,
-    verbose=False
-):
+def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, barra_progreso=None, 
+                            callback_finalizar=None,verbose=False):
     """
     Convierte los frames mejorados en un video manteniendo el audio original con mejoras en manejo de errores y recursos.
     
@@ -80,10 +74,10 @@ def convertir_frames_a_video(
         barra_progreso.set(0.9)
         if callback_finalizar:
             callback_finalizar()
-        logger.info(f"Video generado exitosamente: {archivo_salida}")
+        logging.info(f"Video generado exitosamente: {archivo_salida}")
 
     except Exception as error_general:
-        logger.error(f"Error crítico en procesamiento de video: {error_general}")
+        logging.error(f"Error crítico en procesamiento de video: {error_general}")
         raise
     
     finally:
@@ -93,7 +87,7 @@ def convertir_frames_a_video(
                 if recurso:
                     recurso.close()
             except Exception as error_recurso:
-                logger.warning(f"Error liberando recurso: {error_recurso}")
+                logging.warning(f"Error liberando recurso: {error_recurso}")
 
         liberar_recurso(clip)
         liberar_recurso(video_original)
@@ -108,7 +102,7 @@ def convertir_frames_a_video(
                 with torch.cuda.device('cuda'):
                     torch.cuda.empty_cache()
             except Exception as error_gpu:
-                logger.warning(f"Error limpiando caché de GPU: {error_gpu}")
+                logging.warning(f"Error limpiando caché de GPU: {error_gpu}")
 
 # Configuración de logging global con mejoras
 logging.basicConfig(
