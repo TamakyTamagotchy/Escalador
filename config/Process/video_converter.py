@@ -10,7 +10,7 @@ from .video_processor import ProcesadorVideo
 logger = logging.getLogger(__name__)
 
 def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, barra_progreso=None, 
-                            callback_finalizar=None,verbose=False):
+                            callback_finalizar=None, verbose=False, tipo_contenido="general"):
     """
     Convierte los frames mejorados en un video manteniendo el audio original con mejoras en manejo de errores y recursos.
     
@@ -26,6 +26,7 @@ def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, b
         barra_progreso (optional): Objeto para actualizar progreso
         callback_finalizar (optional): Función a llamar al finalizar
         verbose (optional): Modo detallado para más información de logging
+        tipo_contenido (str): Tipo de contenido para seleccionar el modelo adecuado
     """
     video_original = None
     clip = None
@@ -71,7 +72,8 @@ def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, b
         clip.close()
         video_original.close()
         
-        barra_progreso.set(0.9)
+        if barra_progreso:
+            barra_progreso.set(0.9)
         if callback_finalizar:
             callback_finalizar()
         logging.info(f"Video generado exitosamente: {archivo_salida}")

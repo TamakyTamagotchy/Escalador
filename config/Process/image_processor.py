@@ -41,7 +41,7 @@ def validate_image(image_path: str) -> bool:
         logger.error(f"Error validando imagen {image_path}: {e}")
         return False
 
-def mejorar_imagen(archivo_entrada,archivo_salida,ruta_realesrgan, ruta_modelos: str, 
+def mejorar_imagen(archivo_entrada, archivo_salida, ruta_realesrgan, ruta_modelos: str, 
     escala: int = 4, 
     modelo: str = "realesrgan-x4plus", 
     usar_cpu: bool = False,
@@ -58,6 +58,7 @@ def mejorar_imagen(archivo_entrada,archivo_salida,ruta_realesrgan, ruta_modelos:
     intentos = 0
     while intentos < max_intentos:
         try:
+            # Asegurar rutas absolutas
             paths = map(pathlib.Path, [
                 ruta_realesrgan, ruta_modelos, 
                 archivo_entrada, archivo_salida
@@ -74,29 +75,35 @@ def mejorar_imagen(archivo_entrada,archivo_salida,ruta_realesrgan, ruta_modelos:
                 if not os.path.exists(path):
                     raise FileNotFoundError(f"{nombre} no encontrado: {path}")
 
+            # Crear directorio temporal para procesamiento
             directorio_temp = os.path.join(os.path.dirname(archivo_salida), "temp_processing")
             os.makedirs(directorio_temp, exist_ok=True)
 
             archivo_temp = os.path.join(directorio_temp, "input.png")
             
+            # Convertir imagen de entrada a PNG para asegurar compatibilidad
             img = cv2.imread(archivo_entrada)
+            if img is None:
+                raise ValueError("No se pudo leer la imagen de entrada")
             cv2.imwrite(archivo_temp, img, [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
+            # Construir comando base
             comando = [
                 ruta_realesrgan,
                 "-i", archivo_temp,
                 "-o", archivo_salida,
                 "-n", modelo,
                 "-m", ruta_modelos,
-                "-s", str(int(escala)),
+                "-s", str(escala),
                 "-g", "-1" if usar_cpu else "0"
             ]
 
-            logger.debug(f"Comando Real-ESRGAN: {' '.join(comando)}")
+            logger.info(f"Ejecutando comando: {' '.join(comando)}")
 
             entorno = os.environ.copy()
             entorno["PATH"] = f"{os.path.dirname(ruta_realesrgan)};{entorno['PATH']}"
 
+            # Ejecutar proceso
             proceso = subprocess.Popen(
                 comando,
                 stdout=subprocess.PIPE,
@@ -109,12 +116,22 @@ def mejorar_imagen(archivo_entrada,archivo_salida,ruta_realesrgan, ruta_modelos:
             salida, error = proceso.communicate()
 
             if proceso.returncode != 0:
+                logger.error(f"Error en el comando: {error}")
                 raise subprocess.CalledProcessError(
-                    proceso.returncode, comando, output=salida, stderr=error
+                    proceso.returncode,
+                    comando,
+                    output=salida,
+                    stderr=error
                 )
 
-            if not validate_image(archivo_salida):
-                raise ValueError("Imagen de salida inválida")
+            # Verificar archivo de salida
+            if not os.path.exists(archivo_salida):
+                raise FileNotFoundError(f"No se generó el archivo de salida: {archivo_salida}")
+
+            # Verificar que la imagen de salida no esté corrupta
+            img_salida = cv2.imread(archivo_salida)
+            if img_salida is None:
+                raise ValueError("La imagen de salida está corrupta o vacía")
 
             if callback_progreso:
                 callback_progreso(1.0)
@@ -127,11 +144,12 @@ def mejorar_imagen(archivo_entrada,archivo_salida,ruta_realesrgan, ruta_modelos:
             usar_cpu = True
 
         finally:
-            shutil.rmtree(directorio_temp, ignore_errors=True)
+            # Limpiar recursos
+            if 'directorio_temp' in locals():
+                shutil.rmtree(directorio_temp, ignore_errors=True)
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
     logger.error(f"Procesamiento fallido para {archivo_entrada}")
     return False
-

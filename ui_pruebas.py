@@ -99,10 +99,10 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         self.modelos_disponibles = {
             "realesr-animevideov3": [2, 3, 4],
             "realesrgan-x4plus-anime": [4],
-           # "ultrasharp": [4],
-           # "ultramix_balanced": [4],
-           # "remacri": [4],
-            
+            #"realesrgan-x4plus": [4],
+            #"ultrasharp": [4],
+            #"ultramix_balanced": [4],
+            #"remacri": [4],
         }
 
         # Configuración DnD si está disponible
@@ -184,8 +184,10 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             command=self._limpiar_seleccion,
             width=100
         ).pack(side="left", padx=5)
+
     def _seleccionar_archivo(self):
         self._procesar_archivo_entrada()
+
     def _crear_vista_previa(self, parent):
         frame = ctk.CTkFrame(parent)
         frame.pack(fill="both", expand=True, padx=5, pady=5)
@@ -298,7 +300,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
     def _procesar_archivo_entrada(self, event=None):
         archivo = event.data.strip('{}') if event else filedialog.askopenfilename(
             filetypes=[("Archivos soportados",
-                       "*.png *.jpg *.jpeg *.bmp *.webp *.mp4 *.avi *.mkv *.mov")])
+                    "*.png *.jpg *.jpeg *.bmp *.webp *.mp4 *.avi *.mkv *.mov")])
 
         if archivo and self._validar_archivo(archivo):
             self.archivo_seleccionado = archivo
@@ -502,8 +504,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         # Actualizar label de estado con mensaje de éxito
         self.label_estado.configure(text="Mejora finalizada con éxito")
         
-        # Opcional: Mostrar mensaje emergente
-        messagebox.showinfo("Proceso Completado", mensaje_exito)
-        
-        # Limpiar recursos o realizar acciones adicionales
-        print(mensaje_exito)
+        # Opcional:def _end_processing(self):
+        """Finaliza el procesamiento"""
+        self.is_processing = False
+        self._configurar_interfaz_proceso(True)

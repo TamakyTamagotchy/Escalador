@@ -1,4 +1,3 @@
-#prueba_config.py
 import os
 import logging
 from dataclasses import dataclass
@@ -29,7 +28,7 @@ class ConfigHandler:
     """Clase para manejar la configuración y verificación de modelos"""
     
     # Rutas base
-    BASE_PATH = r"Ruta del archivo en donde esta el ejecutable"
+    BASE_PATH = r"D:\Escritorio\Carpetas con cosas\Programas\realesrgan-ncnn-vulkan"
     EXECUTABLE_PATH = os.path.join(BASE_PATH, "realesrgan-ncnn-vulkan.exe")
     MODELS_PATH = os.path.join(BASE_PATH, "models")
 
@@ -84,7 +83,21 @@ class ConfigHandler:
                 'description': 'Optimizado para contenido anime/manga',
                 'best_for': ['anime', 'manga', 'dibujos animados']
             })
-        # Resto de la lógica de configuración específica por modelo...
+        elif 'remacri' in model_name.lower():
+            default_config.update({
+                'description': 'Optimizado para remasterización de imágenes',
+                'best_for': ['remasterización', 'fotografía']
+            })
+        elif 'ultramix_balanced' in model_name.lower():
+            default_config.update({
+                'description': 'Optimizado para una mezcla equilibrada de mejoras',
+                'best_for': ['general', 'fotografía']
+            })
+        elif 'ultrasharp' in model_name.lower():
+            default_config.update({
+                'description': 'Optimizado para mejorar la nitidez de las imágenes',
+                'best_for': ['nitidez', 'detalles']
+            })
 
         return ModelConfig(**default_config)
 
@@ -147,6 +160,12 @@ class ConfigHandler:
             return 'realesr-animevideov3-x2'  # Escala x2 por defecto para video
         elif 'anime' in content_type or 'manga' in content_type:
             return 'realesrgan-x4plus-anime'
+        elif 'remasterización' in content_type:
+            return 'remacri'
+        elif 'mezcla equilibrada' in content_type:
+            return 'ultramix_balanced'
+        elif 'nitidez' in content_type:
+            return 'ultrasharp'
         else:
             return 'realesrgan-x4plus'
 

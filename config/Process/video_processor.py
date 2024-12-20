@@ -5,6 +5,7 @@ import subprocess
 import logging
 from config.gpu_manager import GestorGPU
 from config.config import Configuracion
+from prueba_config import get_recommended_model
 
 logger = logging.getLogger("ProcesadorVideo")
 
@@ -56,7 +57,7 @@ class ProcesadorVideo:
         """
         Procesa un lote de frames usando RealesrGAN con manejo de errores mejorado y optimización de códecs.
         """
-        lote_frames, realesrgan_path, models_path, modelo, escala, indice_lote = args
+        lote_frames, realesrgan_path, models_path, tipo_contenido, escala, indice_lote = args
         frames_procesados = []
 
         directorio_base = os.path.dirname(lote_frames[0])
@@ -83,6 +84,9 @@ class ProcesadorVideo:
                 nuevo_nombre = f"frame_{i:08d}.png"
                 ruta_destino = os.path.join(directorio_lote, nuevo_nombre)
                 shutil.copy2(frame, ruta_destino)
+
+            # Obtener el modelo recomendado
+            modelo = get_recommended_model(tipo_contenido)
 
             # Construir comando base
             comando = [
