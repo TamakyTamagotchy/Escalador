@@ -6,11 +6,12 @@ import gc
 import torch
 from moviepy import VideoFileClip, ImageSequenceClip
 from .video_processor import ProcesadorVideo
+from config.config import Configuracion
 
 logger = logging.getLogger(__name__)
 
 def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, barra_progreso=None, 
-                            callback_finalizar=None, verbose=False, tipo_contenido="general"):
+                            callback_finalizar=None, verbose=False):
     """
     Convierte los frames mejorados en un video manteniendo el audio original con mejoras en manejo de errores y recursos.
     
@@ -62,11 +63,15 @@ def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, b
             clip = clip.with_duration(video_original.audio.duration)
         
         configuracion_codec = ProcesadorVideo.obtener_codec_optimal()
+
+        # Ajustar el número de hilos de procesamiento
+        num_hilos = min(Configuracion.MAXIMO_HILOS, os.cpu_count())
         
         clip.write_videofile(
             archivo_salida,
             codec=configuracion_codec['codec'],
-            audio_codec='aac'
+            audio_codec='aac',
+            threads=num_hilos  # Ajustar los hilos de procesamiento
         )
         
         clip.close()
@@ -112,6 +117,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('procesamiento_video.log', encoding='utf-8', mode='a')
+        logging.FileHandler('aplicacion.log', encoding='utf-8', mode='a')
     ]
 )

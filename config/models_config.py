@@ -2,6 +2,8 @@
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 from asyncio.log import logger
+from config.config import Configuracion
+import os
 
 @dataclass
 class ModeloConfig:
@@ -17,7 +19,7 @@ class ConfiguracionModelos:
     CONFIGURACION_DEFAULT = {
         'parametros_gpu': {
             'tile_size': 0,  # Modo automático
-            'gpu_threads': 2,
+            'gpu_threads': Configuracion.MAXIMO_HILOS,
             'gpu_block': '128,1,1'
         },
         'optimizaciones': {
@@ -80,15 +82,15 @@ class ConfiguracionModelos:
             comando = [c for c in comando if c not in ['-s', '--sharpening', '-d', '-x']]
 
             # Parámetros de tile y threads
+            num_hilos = min(Configuracion.MAXIMO_HILOS, os.cpu_count())
             comando.extend([
                 "-t", str(config.parametros_gpu.get('tile_size', 0)),
-                "-j", f"2:{config.parametros_gpu.get('gpu_block', '128,1,1')}"
+                "-j", f"1:{num_hilos}:{num_hilos}"
             ])
 
             # Optimizaciones generales
             comando.extend([
                 "--fp32",  # Precisión de punto flotante
-                "-x"       # Modo TTA (Test Time Augmentation)
             ])
 
             # Denoise y nitidez

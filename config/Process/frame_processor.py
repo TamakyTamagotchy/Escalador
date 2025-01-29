@@ -1,4 +1,3 @@
-#frame_processor
 import os
 import glob
 import gc
@@ -67,7 +66,7 @@ def mejorar_frames(directorio_temp, ruta_realesrgan, ruta_modelos, barra_progres
     total_frames = len(frames)
     processed_frames = set()
     failed_frames = []
-    batch_size = min(Configuracion.TAMANIO_LOTE, max(1, total_frames // 10))
+    batch_size = min(Configuracion.TAMANIO_LOTE, max(1, total_frames // os.cpu_count()))
     
     lotes = [frames[i:i + batch_size] for i in range(0, len(frames), batch_size)]
     logger.info(f"Iniciando mejora de {total_frames} frames en {len(lotes)} lotes de tamaño {batch_size}")
@@ -77,7 +76,7 @@ def mejorar_frames(directorio_temp, ruta_realesrgan, ruta_modelos, barra_progres
         for i, lote in enumerate(lotes)
     ]
     
-    max_workers = min(Configuracion.MAXIMO_HILOS, len(lotes))
+    max_workers = min(Configuracion.MAXIMO_HILOS, os.cpu_count())
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(ProcesadorVideo.procesar_lote_frames, args): i 
                 for i, args in enumerate(lote_args)}

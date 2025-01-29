@@ -6,6 +6,7 @@ import logging
 from config.gpu_manager import GestorGPU
 from config.config import Configuracion
 from prueba_config import get_recommended_model
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger("ProcesadorVideo")
 
@@ -26,6 +27,10 @@ class ProcesadorVideo:
                 'color_trc': 'bt709',
                 'colorspace': 'bt709',
                 'color_range': 'tv',
+                'tune': 'film',  # Mejora para contenido de alta calidad
+                'qmin': '10',    # Calidad mínima
+                'qmax': '51',    # Calidad máxima
+                'qcomp': '0.6'   # Compresión de calidad
             }
         }
         configuraciones_codec = {
@@ -80,14 +85,14 @@ class ProcesadorVideo:
                 os.remove(archivo)
 
             # Copiar frames
-            for i, frame in enumerate(frames_entrada):
-                nuevo_nombre = f"frame_{i:08d}.png"
-                ruta_destino = os.path.join(directorio_lote, nuevo_nombre)
-                shutil.copy2(frame, ruta_destino)
+            with ThreadPoolExecutor() as executor:
+                futures = [executor.submit(shutil.copy2, frame, os.path.join(directorio_lote, f"frame_{i:08d}.png")) for i, frame in enumerate(frames_entrada)]
+                for future in as_completed(futures):
+                    future.result()
 
             # Obtener el modelo recomendado
             modelo = get_recommended_model(tipo_contenido)
-
+            
             # Construir comando base
             comando = [
                 os.path.normpath(realesrgan_path),
@@ -97,9 +102,11 @@ class ProcesadorVideo:
                 "-m", os.path.normpath(models_path),
                 "-s", str(escala),
                 "-f", "png",
-                "-g", "0",
-                "-t", "0"
-            ]
+                "-g", "0","1",
+                "-t", "0","0",
+                "-j", "1:2:2", # Ajustar los hilos de procesamiento
+                "-x"
+                ]
 
             logger.info(f"Ejecutando comando: {' '.join(comando)}")
 
@@ -130,12 +137,10 @@ class ProcesadorVideo:
             logger.info(f"Configuración de códec: {codec_config}")
 
             # Mover frames mejorados
-            for i, frame_mejorado in enumerate(frames_mejorados):
-                indice_global = indice_lote * len(lote_frames) + i
-                nuevo_nombre = f"enhanced_frame_{indice_global:08d}.png"
-                ruta_destino = os.path.join(directorio_base, nuevo_nombre)
-                shutil.move(frame_mejorado, ruta_destino)
-                frames_procesados.append(ruta_destino)
+            with ThreadPoolExecutor() as executor:
+                futures = [executor.submit(shutil.move, frame_mejorado, os.path.join(directorio_base, f"enhanced_frame_{indice_lote * len(lote_frames) + i:08d}.png")) for i, frame_mejorado in enumerate(frames_mejorados)]
+                for future in as_completed(futures):
+                    frames_procesados.append(future.result())
 
             logger.info(f"Lote {indice_lote} completado: {len(frames_procesados)} frames procesados.")
 

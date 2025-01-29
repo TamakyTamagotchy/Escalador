@@ -33,6 +33,11 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         self.frames_mejorados = []
         self.video_generado = False
 
+        # Habilitar redimensionamiento
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self.panel_principal.grid(row=0, column=0, sticky="nsew")
+
     def run_in_background(self, target, args=(), callback=None):
         """Ejecuta una función en segundo plano"""
         def wrapper():
@@ -91,7 +96,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             return
 
         # Variables de control
-        self.solo_imagenes = ctk.BooleanVar(value=False)
+        self.solo_imagenes = ctk.BooleanVar(value=True)
         self.modelo_var = ctk.StringVar(value="realesr-animevideov3")
         self.var_escala = ctk.IntVar(value=2)
 
@@ -114,6 +119,10 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         # Panel principal
         self.panel_principal = ctk.CTkFrame(self)
         self.panel_principal.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Habilitar redimensionamiento en panel principal
+        self.panel_principal.grid_rowconfigure(0, weight=1)
+        self.panel_principal.grid_columnconfigure(0, weight=1)
 
         # Cabecera
         self._crear_cabecera()
@@ -149,6 +158,10 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
     def _crear_area_principal(self):
         frame_principal = ctk.CTkFrame(self.panel_principal)
         frame_principal.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Habilitar redimensionamiento en frame principal
+        frame_principal.grid_rowconfigure(0, weight=1)
+        frame_principal.grid_columnconfigure(0, weight=1)
 
         # Área de selección de archivo
         self._crear_selector_archivo(frame_principal)
@@ -191,6 +204,11 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
     def _crear_vista_previa(self, parent):
         frame = ctk.CTkFrame(parent)
         frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Habilitar redimensionamiento en frame de vista previa
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
         # Etiqueta de vista previa
         ctk.CTkLabel(
             frame,
@@ -504,7 +522,6 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         # Actualizar label de estado con mensaje de éxito
         self.label_estado.configure(text="Mejora finalizada con éxito")
         
-        # Opcional:def _end_processing(self):
-        """Finaliza el procesamiento"""
-        self.is_processing = False
-        self._configurar_interfaz_proceso(True)
+        # Opcional: mostrar mensaje de éxito
+        messagebox.showinfo("Proceso Completado", mensaje_exito)
+        self._end_processing()

@@ -8,11 +8,6 @@ import torch
 from typing import Callable, Optional
 import pathlib
 
-logging.basicConfig(
-    level=logging.DEBUG, 
-    format='%(asctime)s - %(levelname)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
 logger = logging.getLogger(__name__)
 
 def validate_image(image_path: str) -> bool:
@@ -44,7 +39,6 @@ def validate_image(image_path: str) -> bool:
 def mejorar_imagen(archivo_entrada, archivo_salida, ruta_realesrgan, ruta_modelos: str, 
     escala: int = 4, 
     modelo: str = "realesrgan-x4plus", 
-    usar_cpu: bool = False,
     callback_progreso: Optional[Callable[[float], None]] = None,
     max_intentos: int = 2
 ) -> bool:
@@ -82,11 +76,11 @@ def mejorar_imagen(archivo_entrada, archivo_salida, ruta_realesrgan, ruta_modelo
             archivo_temp = os.path.join(directorio_temp, "input.png")
             
             # Convertir imagen de entrada a PNG para asegurar compatibilidad
-            img = cv2.imread(archivo_entrada)
+            img = cv2.imread(archivo_entrada, cv2.IMREAD_UNCHANGED)
             if img is None:
                 raise ValueError("No se pudo leer la imagen de entrada")
             cv2.imwrite(archivo_temp, img, [cv2.IMWRITE_PNG_COMPRESSION, 0])
-
+            
             # Construir comando base
             comando = [
                 ruta_realesrgan,
@@ -95,7 +89,10 @@ def mejorar_imagen(archivo_entrada, archivo_salida, ruta_realesrgan, ruta_modelo
                 "-n", modelo,
                 "-m", ruta_modelos,
                 "-s", str(escala),
-                "-g", "-1" if usar_cpu else "0"
+                "-g", "0","1",       # Ajusto el uso automatico ya sea de GPU o CPU
+                "-t", "0","0",       # Ajustar el tamaño de los mosaicos
+                "-j", "1:2:2",      # Ajustar los hilos de procesamiento
+                "-x"
             ]
 
             logger.info(f"Ejecutando comando: {' '.join(comando)}")
@@ -129,19 +126,27 @@ def mejorar_imagen(archivo_entrada, archivo_salida, ruta_realesrgan, ruta_modelo
                 raise FileNotFoundError(f"No se generó el archivo de salida: {archivo_salida}")
 
             # Verificar que la imagen de salida no esté corrupta
-            img_salida = cv2.imread(archivo_salida)
-            if img_salida is None:
+            img_salida = cv2.imread(archivo_salida, cv2.IMREAD_UNCHANGED)
+            if img_salida is None or img_salida.sum() == 0:
                 raise ValueError("La imagen de salida está corrupta o vacía")
+
+            # Si la imagen tiene un canal alfa, mantener la transparencia
+            if img.shape[2] == 4:
+                alpha_channel = img[:, :, 3]
+                img_salida = cv2.merge((img_salida[:, :, 0], img_salida[:, :, 1], img_salida[:, :, 2], alpha_channel))
+                cv2.imwrite(archivo_salida, img_salida, [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
             if callback_progreso:
                 callback_progreso(1.0)
 
             return True
 
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Intento {intentos + 1} fallido: {str(e)}")
+            intentos += 1
         except Exception as e:
             logger.error(f"Intento {intentos + 1} fallido: {str(e)}")
             intentos += 1
-            usar_cpu = True
 
         finally:
             # Limpiar recursos

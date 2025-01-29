@@ -23,5 +23,9 @@ def informacion_formato_codec(configuraciones_codec: Dict[str, Any]) -> str:
             f"bitrate: {configuraciones_codec.get('bitrate', 'auto')})")
 
 # Inicialización y logging
-tipo_gpu = GestorGPU.verificar_compatibilidad_gpu()
-configuraciones_codec = ProcesadorVideo.obtener_codec_optimal(tipo_gpu)
+try:
+    tipo_gpu = GestorGPU.verificar_compatibilidad_gpu()
+    configuraciones_codec = ProcesadorVideo.obtener_codec_optimal(tipo_gpu)
+    logger.info(f"Configuración de códec inicializada: {informacion_formato_codec(configuraciones_codec)}")
+except Exception as e:
+    logger.error(f"Error al inicializar configuraciones: {e}")
