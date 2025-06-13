@@ -1,160 +1,190 @@
 import logging
-import cv2
-import os
-import shutil
 import subprocess
 import gc
+import pathlib
+import tempfile
+from PIL import Image, ImageFilter  # Se importa ImageFilter para aplicar un suavizado
 import torch
 from typing import Callable, Optional
-import pathlib
+import os  # Se importa os para obtener el conteo de CPUs
 
 logger = logging.getLogger(__name__)
 
 def validate_image(image_path: str) -> bool:
     try:
-        if not os.path.exists(image_path):
+        if not pathlib.Path(image_path).exists():
             logger.error(f"Archivo no existe: {image_path}")
             return False
-
-        img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
-        
-        if img is None:
-            logger.error(f"No se pudo leer la imagen: {image_path}")
-            return False
-
-        height, width = img.shape[:2]
-        if height == 0 or width == 0:
-            logger.error(f"Imagen con dimensiones inválidas: {image_path}")
-            return False
-
-        if len(img.shape) not in [2, 3]:
-            logger.error(f"Formato de imagen no soportado: {image_path}")
-            return False
-
+        with Image.open(image_path) as img:
+            img.verify()
         return True
     except Exception as e:
         logger.error(f"Error validando imagen {image_path}: {e}")
         return False
 
-def mejorar_imagen(archivo_entrada, archivo_salida, ruta_realesrgan, ruta_modelos: str, 
-    escala: int = 4, 
-    modelo: str = "realesrgan-x4plus", 
+def run_command(comando: list, timeout: int = 120) -> subprocess.CompletedProcess:
+    logger.info(f"Ejecutando comando: {' '.join(comando)}")
+    return subprocess.run(
+        comando,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        timeout=timeout,
+        check=True
+    )
+
+def limpiar_tempfiles(*paths):
+    for path in paths:
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
+
+def limpiar_recursos():
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+def get_gpu_flag(dispositivo_gpu):
+    if dispositivo_gpu and dispositivo_gpu.startswith("cuda"):
+        return ["-g", "0"]
+    elif dispositivo_gpu and dispositivo_gpu.startswith("amd"):
+        return ["-g", "0"]
+    elif dispositivo_gpu and dispositivo_gpu.startswith("intel"):
+        return ["-g", "0"]
+    return []
+
+def calcular_parametros_gpu(dispositivo_gpu, modelo):
+    num_hilos_gpu = 2
+    gpu_blocks = 8
+    num_hilos_cpu = min(os.cpu_count() - 1, 4) # Dejar al menos un hilo para el sistema
+
+    if isinstance(dispositivo_gpu, str):
+        from config.gpu_manager import GestorGPU
+        gestor = GestorGPU._get_instance()
+        if 'NVIDIA' in dispositivo_gpu.upper():
+            if gestor._gpus_cache:
+                for gpu in gestor._gpus_cache:
+                    if gpu.vendor == 'NVIDIA':
+                        vram_gb = gpu.vram_mb / 1024
+                        num_hilos_gpu = max(2, min(8, int(vram_gb)))
+                        gpu_blocks = max(8, min(16, int(vram_gb * 2)))
+                        break
+        elif 'AMD' in dispositivo_gpu.upper():
+            if gestor._gpus_cache:
+                for gpu in gestor._gpus_cache:
+                    if gpu.vendor == 'AMD':
+                        vram_gb = gpu.vram_mb / 1024
+                        num_hilos_gpu = max(4, min(12, int(vram_gb * 1.5)))
+                        gpu_blocks = max(4, min(10, int(vram_gb)))
+                        break
+        elif 'Intel' in dispositivo_gpu.upper():
+            if gestor._gpus_cache:
+                for gpu in gestor._gpus_cache:
+                    if gpu.vendor == 'Intel':
+                        vram_gb = gpu.vram_mb / 1024
+                        shared_memory = vram_gb * 0.8
+                        num_hilos_gpu = max(2, min(6, int(shared_memory)))
+                        gpu_blocks = max(4, min(8, int(shared_memory)))
+                        num_hilos_cpu = max(1, min(os.cpu_count() - 2, int(shared_memory)))
+                        break
+
+    return num_hilos_gpu, gpu_blocks, num_hilos_cpu
+
+def mejorar_imagen(
+    archivo_entrada: str,
+    archivo_salida: str,
+    ruta_realesrgan: str,
+    ruta_modelos: str,
+    escala: int = 4,
+    modelo: str = "realesrgan-x4plus",
     callback_progreso: Optional[Callable[[float], None]] = None,
-    max_intentos: int = 2
+    max_intentos: int = 2,
+    dispositivo_gpu: str = None
 ) -> bool:
     """
-    Mejora una imagen individual con validaciones y reintentos más robustos.
+    Mejora la imagen usando Real-ESRGAN, preservando el fondo (transparencia) cuando corresponda
+    y aplicando un filtro suave para obtener un resultado natural.
     """
     if not validate_image(archivo_entrada):
         logger.error(f"Imagen inválida: {archivo_entrada}")
         return False
 
-    intentos = 0
-    while intentos < max_intentos:
+    # Obtener rutas absolutas con pathlib y validarlas
+    rutas = {
+        "Real-ESRGAN": pathlib.Path(ruta_realesrgan).resolve(),
+        "Modelos": pathlib.Path(ruta_modelos).resolve(),
+        "Entrada": pathlib.Path(archivo_entrada).resolve(),
+        "Salida": pathlib.Path(archivo_salida).resolve()
+    }
+    for nombre, path in rutas.items():
+        if nombre in ["Real-ESRGAN", "Modelos", "Entrada"] and not path.exists():
+            raise FileNotFoundError(f"{nombre} no encontrado: {path}")
+
+    intento = 0
+    while intento < max_intentos:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_input:
+            temp_input_path = pathlib.Path(temp_input.name)
         try:
-            # Asegurar rutas absolutas
-            paths = map(pathlib.Path, [
-                ruta_realesrgan, ruta_modelos, 
-                archivo_entrada, archivo_salida
-            ])
-            ruta_realesrgan, ruta_modelos, archivo_entrada, archivo_salida = [
-                str(path.resolve()) for path in paths
-            ]
+            with Image.open(rutas["Entrada"]) as img:
+                if img.mode in ("RGBA", "LA") or (img.mode == "P" and 'transparency' in img.info):
+                    img = img.convert("RGBA")
+                else:
+                    img = img.convert("RGB")
+                img.save(temp_input_path)
 
-            for path, nombre in [
-                (ruta_realesrgan, "Ejecutable Real-ESRGAN"),
-                (ruta_modelos, "Directorio de modelos"),
-                (archivo_entrada, "Archivo de entrada")
-            ]:
-                if not os.path.exists(path):
-                    raise FileNotFoundError(f"{nombre} no encontrado: {path}")
+            num_hilos_gpu, gpu_blocks, num_hilos_cpu = calcular_parametros_gpu(dispositivo_gpu, modelo)
+            gpu_flag = get_gpu_flag(dispositivo_gpu)
+            gpu_flag += ["-j", f"{num_hilos_gpu}:{gpu_blocks}:{num_hilos_cpu}"]
 
-            # Crear directorio temporal para procesamiento
-            directorio_temp = os.path.join(os.path.dirname(archivo_salida), "temp_processing")
-            os.makedirs(directorio_temp, exist_ok=True)
-
-            archivo_temp = os.path.join(directorio_temp, "input.png")
-            
-            # Convertir imagen de entrada a PNG para asegurar compatibilidad
-            img = cv2.imread(archivo_entrada, cv2.IMREAD_UNCHANGED)
-            if img is None:
-                raise ValueError("No se pudo leer la imagen de entrada")
-            cv2.imwrite(archivo_temp, img, [cv2.IMWRITE_PNG_COMPRESSION, 0])
-            
-            # Construir comando base
             comando = [
-                ruta_realesrgan,
-                "-i", archivo_temp,
-                "-o", archivo_salida,
+                str(rutas["Real-ESRGAN"]),
+                "-i", str(temp_input_path),
+                "-o", str(rutas["Salida"]),
                 "-n", modelo,
-                "-m", ruta_modelos,
+                "-m", str(rutas["Modelos"]),
                 "-s", str(escala),
-                "-g", "0","1",       # Ajusto el uso automatico ya sea de GPU o CPU
-                "-t", "0","0",       # Ajustar el tamaño de los mosaicos
-                "-j", "1:2:2",      # Ajustar los hilos de procesamiento
-                "-x"
-            ]
+                "-f", "png"
+            ] + gpu_flag
 
-            logger.info(f"Ejecutando comando: {' '.join(comando)}")
+            logger.info(f"Configuración optimizada para modelo {modelo}:")
+            logger.info(f"GPU threads: {num_hilos_gpu}, GPU blocks: {gpu_blocks}, CPU threads: {num_hilos_cpu}")
+            logger.info(f"Comando completo: {' '.join(comando)}")
 
-            entorno = os.environ.copy()
-            entorno["PATH"] = f"{os.path.dirname(ruta_realesrgan)};{entorno['PATH']}"
+            resultado = run_command(comando)
+            logger.info(f"Salida del comando: {resultado.stdout}")
 
-            # Ejecutar proceso
-            proceso = subprocess.Popen(
-                comando,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                env=entorno,
-                cwd=os.path.dirname(ruta_realesrgan)
-            )
+            if not rutas["Salida"].exists():
+                raise FileNotFoundError(f"No se generó el archivo de salida: {rutas['Salida']}")
 
-            salida, error = proceso.communicate()
+            with Image.open(rutas["Salida"]) as img_salida:
+                img_salida.verify()
+                if img_salida.size == (0, 0):
+                    raise Exception("Imagen de salida vacía")
 
-            if proceso.returncode != 0:
-                logger.error(f"Error en el comando: {error}")
-                raise subprocess.CalledProcessError(
-                    proceso.returncode,
-                    comando,
-                    output=salida,
-                    stderr=error
-                )
-
-            # Verificar archivo de salida
-            if not os.path.exists(archivo_salida):
-                raise FileNotFoundError(f"No se generó el archivo de salida: {archivo_salida}")
-
-            # Verificar que la imagen de salida no esté corrupta
-            img_salida = cv2.imread(archivo_salida, cv2.IMREAD_UNCHANGED)
-            if img_salida is None or img_salida.sum() == 0:
-                raise ValueError("La imagen de salida está corrupta o vacía")
-
-            # Si la imagen tiene un canal alfa, mantener la transparencia
-            if img.shape[2] == 4:
-                alpha_channel = img[:, :, 3]
-                img_salida = cv2.merge((img_salida[:, :, 0], img_salida[:, :, 1], img_salida[:, :, 2], alpha_channel))
-                cv2.imwrite(archivo_salida, img_salida, [cv2.IMWRITE_PNG_COMPRESSION, 0])
+            # Abrir imagen de salida para aplicar un filtro suave (suavizado) y reinyectar alfa si es necesario
+            with Image.open(rutas["Salida"]) as img_mejorada:
+                img_mejorada = img_mejorada.convert("RGBA") if img_mejorada.mode != "RGBA" else img_mejorada
+                img_mejorada = img_mejorada.filter(ImageFilter.SMOOTH)
+                img_mejorada.save(rutas["Salida"])
 
             if callback_progreso:
                 callback_progreso(1.0)
-
+            limpiar_tempfiles(temp_input_path)
             return True
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Intento {intentos + 1} fallido: {str(e)}")
-            intentos += 1
+            logger.error(f"Error en el comando (intento {intento + 1}): {e.stderr}")
+            intento += 1
+
         except Exception as e:
-            logger.error(f"Intento {intentos + 1} fallido: {str(e)}")
-            intentos += 1
+            logger.error(f"Intento {intento + 1} fallido: {str(e)}")
+            intento += 1
 
         finally:
-            # Limpiar recursos
-            if 'directorio_temp' in locals():
-                shutil.rmtree(directorio_temp, ignore_errors=True)
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            limpiar_recursos()
+            limpiar_tempfiles(temp_input_path)
 
     logger.error(f"Procesamiento fallido para {archivo_entrada}")
     return False

@@ -25,6 +25,9 @@ def informacion_formato_codec(configuraciones_codec: Dict[str, Any]) -> str:
 # Inicialización y logging
 try:
     tipo_gpu = GestorGPU.verificar_compatibilidad_gpu()
+    if tipo_gpu == 'Intel':
+        logger.warning('Se detectó GPU Intel, pero se priorizará NVIDIA si está disponible.')
+        tipo_gpu = 'NVIDIA' if GestorGPU.verificar_compatibilidad_gpu() == 'NVIDIA' else tipo_gpu
     configuraciones_codec = ProcesadorVideo.obtener_codec_optimal(tipo_gpu)
     logger.info(f"Configuración de códec inicializada: {informacion_formato_codec(configuraciones_codec)}")
 except Exception as e:

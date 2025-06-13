@@ -50,3 +50,19 @@ class GestorRecursos:
                         logger.info(f"Memoria GPU liberada en dispositivo {i}. Uso actual: {gpu_mem / gpu_total * 100}%")
                         time.sleep(Configuracion.INTERVALO_MONITOREO)
                 time.sleep(Configuracion.INTERVALO_MONITOREO)
+    
+    @staticmethod
+    def monitorear_recursos_dinamico():
+        """
+        Monitorea dinámicamente el uso de recursos y ajusta configuraciones según el estado del sistema.
+        """
+        while True:
+            uso_cpu = psutil.cpu_percent(interval=0.1)
+            uso_memoria = psutil.virtual_memory().percent
+            if uso_cpu > Configuracion.MAXIMO_USO_CPU:
+                Configuracion.MAXIMO_HILOS = max(1, Configuracion.MAXIMO_HILOS - 1)
+                logger.warning(f"Reduciendo hilos debido a alto uso de CPU: {uso_cpu}%")
+            if uso_memoria > Configuracion.UMBRAL_MEMORIA:
+                gc.collect()
+                logger.warning(f"Liberando memoria debido a alto uso: {uso_memoria}%")
+            time.sleep(Configuracion.INTERVALO_VERIFICACION)

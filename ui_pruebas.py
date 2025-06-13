@@ -7,7 +7,7 @@ import cv2
 import os
 import threading
 import shutil
-from queue import Queue
+from queue import Queue, Empty  # Agregado: importar la excepción Empty del módulo queue
 from pathlib import Path
 from prueba_config import get_realesrgan_path, get_models_path
 from config.Process.video_converter import convertir_frames_a_video
@@ -49,19 +49,16 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
                 self.queue.put((self._handle_error, str(e)))
             finally:
                 self.queue.put((self._end_processing, None))
-
-        self.processing_thread = threading.Thread(target=wrapper)
-        self.processing_thread.daemon = True
+        self.processing_thread = threading.Thread(target=wrapper, daemon=True)
         self.processing_thread.start()
         self._check_queue()
 
     def _check_queue(self):
-        """Verifica la cola de mensajes del hilo secundario"""
         try:
             while True:
                 callback, args = self.queue.get_nowait()
-                callback(args) if args is not None else callback()
-        except:
+                callback(args)
+        except Empty:
             pass
         finally:
             if self.is_processing:
@@ -74,7 +71,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         self._configurar_interfaz_proceso(True)
         self.is_processing = False
 
-    def _end_processing(self):
+    def _end_processing(self, _=None):
         """Finaliza el procesamiento"""
         self.is_processing = False
         self._configurar_interfaz_proceso(True)
@@ -104,10 +101,6 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         self.modelos_disponibles = {
             "realesr-animevideov3": [2, 3, 4],
             "realesrgan-x4plus-anime": [4],
-            #"realesrgan-x4plus": [4],
-            #"ultrasharp": [4],
-            #"ultramix_balanced": [4],
-            #"remacri": [4],
         }
 
         # Configuración DnD si está disponible
@@ -318,7 +311,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
     def _procesar_archivo_entrada(self, event=None):
         archivo = event.data.strip('{}') if event else filedialog.askopenfilename(
             filetypes=[("Archivos soportados",
-                    "*.png *.jpg *.jpeg *.bmp *.webp *.mp4 *.avi *.mkv *.mov")])
+                    "*.png *.jpg *.jpeg *.bmp *.webp *.mp4 *.avi *.mkv *.mov *.gif")])
 
         if archivo and self._validar_archivo(archivo):
             self.archivo_seleccionado = archivo
@@ -331,7 +324,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         ext = Path(archivo).suffix.lower()
         if self.solo_imagenes.get():
             return ext in ['.png', '.jpg', '.jpeg', '.bmp', '.webp']
-        return ext in ['.mp4', '.avi', '.mkv', '.mov']
+        return ext in ['.mp4', '.avi', '.mkv', '.mov', '.gif']
 
     def _mostrar_info_archivo(self):
         if not self.archivo_seleccionado:
@@ -358,12 +351,14 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
                 imagen = Image.open(self.archivo_seleccionado)
             else:
                 cap = cv2.VideoCapture(self.archivo_seleccionado)
-                ret, frame = cap.read()
-                if not ret:
-                    raise Exception("No se pudo leer el archivo de video")
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                imagen = Image.fromarray(frame)
-                cap.release()
+                try:
+                    ret, frame = cap.read()
+                    if not ret:
+                        raise Exception("No se pudo leer el archivo de video")
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    imagen = Image.fromarray(frame)
+                finally:
+                    cap.release()
             # Ajustar tamaño y mostrar
             w, h = imagen.size
             ratio = min(800/w, 400/h)
