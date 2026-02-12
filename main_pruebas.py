@@ -1,21 +1,12 @@
-#main.py
-from ui_pruebas import AplicacionMejoradorVideo
-import logging
+import sys
+import os
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('aplicacion.log', encoding='utf-8', mode='a')
-    ]
-)
+# Asegura rutas absolutas para imports
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BASE_DIR)
+
+from ui_pruebas import AplicacionMejoradorVideo
 
 if __name__ == "__main__":
-    logging.info('Aplicación iniciada')
-    from config.gpu_manager import GestorGPU  # nuevo import para gestionar la GPU
-    gpu_seleccionada = GestorGPU.seleccionar_dispositivo_gpu()  # obtener dispositivo
-    print(f"GPU seleccionada: {gpu_seleccionada}")  # salida en terminal
     app = AplicacionMejoradorVideo()
     app.mainloop()
-    logging.info('Aplicación finalizada')
