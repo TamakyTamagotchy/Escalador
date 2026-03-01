@@ -1,119 +1,161 @@
-import os, glob, gc, torch, cv2
-from asyncio.log import logger
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from config.config import Configuracion
-from config.models_config import ConfiguracionModelos
-from .video_processor import ProcesadorVideo
+# frame_processor.py
+import glob
+import logging
+import os
+import subprocess
 
-def extraer_frames(archivo_seleccionado, directorio_temp, barra_progreso, after):
+import cv2
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from config.models_config import construir_comando
+
+logger = logging.getLogger(__name__)
+
+
+def extraer_frames(archivo_seleccionado, directorio_temp, barra_progreso=None, after=None):
+    """
+    Extrae todos los frames de un archivo de video como imagenes PNG.
+    Usa escritura en hilos para paralelismo de I/O.
+    """
     cap = cv2.VideoCapture(archivo_seleccionado)
     if not cap.isOpened():
-        raise Exception(f"No se pudo abrir el archivo de video: {archivo_seleccionado}")
-    
+        raise RuntimeError(f"No se pudo abrir el archivo de video: {archivo_seleccionado}")
+
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    current_frame = 0
-    
-    def save_frame(frame, frame_number):
+    if frame_count <= 0:
+        cap.release()
+        raise RuntimeError(f"Video sin frames: {archivo_seleccionado}")
+
+    logger.info(f"Extrayendo {frame_count} frames de {archivo_seleccionado}")
+
+    def save_frame(frame_data, frame_number):
         frame_path = os.path.join(directorio_temp, f"frame_{frame_number:08d}.png")
-        cv2.imwrite(frame_path, frame)
-        
-    with ThreadPoolExecutor() as executor:
+        cv2.imwrite(frame_path, frame_data)
+        return frame_number
+
+    current_frame = 0
+    with ThreadPoolExecutor(max_workers=4) as executor:
         futures = []
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            futures.append(executor.submit(save_frame, frame, current_frame))
+            futures.append(executor.submit(save_frame, frame.copy(), current_frame))
             current_frame += 1
-            
+
+        # Rastrear progreso
+        completed = 0
         for future in as_completed(futures):
-            progress = 0.1 + (current_frame / frame_count) * 0.2
-            after(0, lambda p=progress: barra_progreso.set(p))
-    
+            future.result()  # lanza excepcion si fallo la escritura
+            completed += 1
+            if barra_progreso and after and completed % 10 == 0:
+                progress = 0.1 + (completed / frame_count) * 0.2
+                after(0, lambda p=progress: barra_progreso.set(p))
+
     cap.release()
+    logger.info(f"Extraccion completada: {current_frame} frames")
 
-def mejorar_frames(directorio_temp, ruta_realesrgan, ruta_modelos, barra_progreso, escala, modelo=None):
+
+def mejorar_frames(
+    directorio_temp,
+    ruta_exe,
+    ruta_modelos,
+    escala=4,
+    upscaler_id="realesrgan",
+    modelo_id="realesr-animevideov3",
+    denoise=-1,
+    barra_progreso=None,
+):
     """
-    Mejora los frames usando procesamiento por lotes y GPU.
+    Mejora todos los frames usando UNA SOLA llamada al upscaler NCNN-Vulkan.
+    El binario maneja su propio batching interno y paralelismo GPU.
     """
-    # Validar y configurar el modelo
-    modelos_disponibles = ConfiguracionModelos.listar_modelos_disponibles()
-    
-    if not modelo:
-        # Usar un modelo predeterminado si no se especifica
-        modelo = modelos_disponibles[0] if modelos_disponibles else None
-    
-    if not modelo or modelo not in modelos_disponibles:
-        raise ValueError(f"Modelo no válido. Modelos disponibles: {modelos_disponibles}")
-    
-    # Logging de información de modelo
-    logger.info(f"Usando modelo de mejora: {modelo}")
-    
     directorio_temp = os.path.normpath(directorio_temp)
-    ruta_realesrgan = os.path.normpath(ruta_realesrgan)
-    ruta_modelos = os.path.normpath(ruta_modelos)
-    
-    frames = sorted(glob.glob(os.path.join(directorio_temp, "frame_*.png")))
-    logger.info(f"Frames encontrados: {len(frames)}")
-    
-    if not frames:
-        raise Exception("No se encontraron frames para mejorar")
-    
-    total_frames = len(frames)
-    processed_frames = set()
-    failed_frames = []
-    batch_size = min(Configuracion.TAMANIO_LOTE, max(1, total_frames // os.cpu_count()))
-    
-    lotes = [frames[i:i + batch_size] for i in range(0, len(frames), batch_size)]
-    logger.info(f"Iniciando mejora de {total_frames} frames en {len(lotes)} lotes de tamaño {batch_size}")
-    
-    lote_args = [
-        (lote, ruta_realesrgan, ruta_modelos, modelo, escala, i, '--tile-size', '256', '-x', '-j', '4')
-        for i, lote in enumerate(lotes)
-    ]
-    
-    max_workers = min(Configuracion.MAXIMO_HILOS, os.cpu_count())
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(ProcesadorVideo.procesar_lote_frames, args): i 
-                for i, args in enumerate(lote_args)}
-        
-        for future in as_completed(futures):
-            try:
-                frames_completados = future.result()
-                processed_frames.update(frames_completados)
-                progress = 0.3 + (len(processed_frames) / total_frames) * 0.4
-                barra_progreso.set(progress)
-                
-                lote_actual = futures[future]
-                logger.info(f"Lote {lote_actual} completado. Progreso: {len(processed_frames)}/{total_frames}")
-                
-                if not frames_completados:
-                    failed_frames.extend(range(
-                        lote_actual * batch_size,
-                        min((lote_actual + 1) * batch_size, total_frames)
-                    ))
-            except Exception as e:
-                logger.error(f"Error en lote {futures[future]}: {str(e)}")
-                failed_frames.extend(range(
-                    futures[future] * batch_size,
-                    min((futures[future] + 1) * batch_size, total_frames)
-                ))
 
-    imagenes_mejoradas = glob.glob(os.path.join(directorio_temp, "enhanced_frame_*.png"))
-    logger.info(f"Imágenes mejoradas encontradas: {len(imagenes_mejoradas)}")
-    logger.info(f"Frames procesados exitosamente: {len(processed_frames)}")
-    logger.info(f"Frames fallidos: {len(failed_frames)}")
-    
-    if len(imagenes_mejoradas) == 0:
-        raise FileNotFoundError("No se generó ningún frame mejorado")
-    
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    frames = sorted(glob.glob(os.path.join(directorio_temp, "frame_*.png")))
+    if not frames:
+        raise FileNotFoundError("No se encontraron frames para mejorar")
+
+    total_frames = len(frames)
+    logger.info(f"Mejorando {total_frames} frames con {upscaler_id}/{modelo_id}, escala={escala}")
+
+    # Crear subdirectorio de salida
+    directorio_salida = os.path.join(directorio_temp, "enhanced")
+    os.makedirs(directorio_salida, exist_ok=True)
+
+    # Construir comando usando el builder centralizado
+    num_hilos = min(max(1, os.cpu_count() - 1), 8)
+    comando = construir_comando(
+        upscaler_id=upscaler_id,
+        modelo_id=modelo_id,
+        ruta_exe=ruta_exe,
+        entrada=directorio_temp,
+        salida=directorio_salida,
+        ruta_modelos=ruta_modelos,
+        escala=escala,
+        gpu_id=0,
+        denoise=denoise,
+        hilos=f"1:{num_hilos}:{num_hilos}",
+    )
+
+    logger.info(f"Ejecutando: {' '.join(comando)}")
+
+    proceso = subprocess.Popen(
+        comando,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        cwd=os.path.dirname(ruta_exe),
+        creationflags=subprocess.CREATE_NO_WINDOW
+    )
+
+    # Parsear stderr para progreso (los upscalers NCNN emiten lineas con porcentaje)
+    for line in proceso.stderr:
+        line = line.strip()
+        if '%' in line:
+            try:
+                for part in line.split():
+                    if '%' in part:
+                        pct = float(part.replace('%', '').strip())
+                        if barra_progreso:
+                            progress = 0.3 + (pct / 100.0) * 0.4
+                            barra_progreso.set(progress)
+                        break
+            except (ValueError, IndexError):
+                pass
+        if line:
+            logger.debug(f"upscaler: {line}")
+
+    proceso.wait()
+
+    if proceso.returncode != 0:
+        raise RuntimeError(
+            f"Upscaler fallo con codigo {proceso.returncode}. "
+            f"Revise el log para mas detalles."
+        )
+
+    # Renombrar archivos de salida al patron esperado
+    output_files = sorted(glob.glob(os.path.join(directorio_salida, "*.png")))
+    if not output_files:
+        raise FileNotFoundError("El upscaler no genero ningun frame mejorado")
+
+    for i, src in enumerate(output_files):
+        dst = os.path.join(directorio_temp, f"enhanced_frame_{i:08d}.png")
+        os.rename(src, dst)
+
+    # Limpiar subdirectorio
+    try:
+        os.rmdir(directorio_salida)
+    except OSError:
+        pass
+
+    enhanced = sorted(glob.glob(os.path.join(directorio_temp, "enhanced_frame_*.png")))
+    logger.info(f"Frames mejorados: {len(enhanced)} de {total_frames}")
+
+    if len(enhanced) == 0:
+        raise FileNotFoundError("No se genero ningun frame mejorado")
 
     return {
         'total_frames': total_frames,
-        'processed_frames': len(processed_frames),
-        'failed_frames': len(failed_frames),
-        'improved_frames': len(imagenes_mejoradas)
+        'enhanced_frames': len(enhanced),
     }

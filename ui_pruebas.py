@@ -1,14 +1,19 @@
-# ui_pruebas
+# ui_pruebas.py
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
-import cv2, os, threading, shutil, logging
-from queue import Queue
+import cv2
+import os
+import threading
+import shutil
+import logging
+from queue import Queue, Empty
 from pathlib import Path
-from prueba_config import get_realesrgan_path, get_models_path
+from prueba_config import detectar_upscalers_instalados
+from config.models_config import UPSCALERS, construir_comando
 from config.Process.video_converter import convertir_frames_a_video
-from config.Process.image_processor import mejorar_imagen 
+from config.Process.image_processor import mejorar_imagen
 from config.Process.frame_processor import mejorar_frames, extraer_frames
 
 logger = logging.getLogger(__name__)
@@ -23,14 +28,12 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
         self.title("Mejorador de Video e Imagen IA Pro")
-        self.geometry("800x720")
+        self.geometry("850x750")
         self._setup_inicial()
         self._crear_interfaz()
         self.queue = Queue()
         self.processing_thread = None
         self.is_processing = False
-        self.frames_mejorados = []
-        self.video_generado = False
 
         # Habilitar redimensionamiento
         self.grid_rowconfigure(0, weight=1)
@@ -38,7 +41,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         self.panel_principal.grid(row=0, column=0, sticky="nsew")
 
     def run_in_background(self, target, args=(), callback=None):
-        """Ejecuta una función en segundo plano"""
+        """Ejecuta una funcion en segundo plano"""
         def wrapper():
             try:
                 result = target(*args)
@@ -59,12 +62,28 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         try:
             while True:
                 callback, args = self.queue.get_nowait()
-                callback(args) if args is not None else callback()
-        except:
+                if args is not None:
+                    callback(args)
+                else:
+                    try:
+                        callback()
+                    except TypeError:
+                        callback(None)
+        except Empty:
             pass
+        except Exception as e:
+            logger.error(f"Error en _check_queue: {e}")
         finally:
             if self.is_processing:
                 self.after(100, self._check_queue)
+
+    def _update_status(self, text):
+        """Thread-safe status label update via queue."""
+        self.queue.put((lambda t=text: self.label_estado.configure(text=t), None))
+
+    def _update_progress(self, value):
+        """Thread-safe progress bar update via queue."""
+        self.queue.put((lambda v=value: self.barra_progreso.set(v), None))
 
     def _handle_error(self, error_msg):
         """Maneja errores del proceso en segundo plano"""
@@ -79,37 +98,39 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         self._configurar_interfaz_proceso(True)
 
     def _setup_inicial(self):
-        # Configuración del tema
+        # Configuracion del tema
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         self.configure(fg_color="#1a1a1a" if not using_dnd else None)
 
         # Variables de estado
         self.archivo_seleccionado = None
-        self.realesrgan_path = get_realesrgan_path()
-        self.models_path = get_models_path()
 
-        if not all([self.realesrgan_path, self.models_path]):
-            messagebox.showerror("Error", "No se encontró el ejecutable realesrgan-ncnn-vulkan o los modelos")
+        # Detectar upscalers instalados
+        self.upscalers_instalados = detectar_upscalers_instalados()
+
+        if not self.upscalers_instalados:
+            messagebox.showerror(
+                "Error",
+                "No se encontro ningun upscaler instalado.\n"
+                "Asegurese de que exista al menos realesrgan-ncnn-vulkan.exe\n"
+                "en la carpeta bin/ del proyecto con su carpeta models/."
+            )
             self.destroy()
             return
 
         # Variables de control
         self.solo_imagenes = ctk.BooleanVar(value=True)
-        self.modelo_var = ctk.StringVar(value="realesr-animevideov3")
-        self.var_escala = ctk.IntVar(value=2)
+        primer_upscaler_id = list(self.upscalers_instalados.keys())[0]
+        self.upscaler_var = ctk.StringVar(value=primer_upscaler_id)
+        primer_upscaler = UPSCALERS[primer_upscaler_id]
+        primer_modelo_id = list(primer_upscaler.modelos.keys())[0]
+        self.modelo_var = ctk.StringVar(value=primer_modelo_id)
+        primer_modelo = primer_upscaler.modelos[primer_modelo_id]
+        self.var_escala = ctk.IntVar(value=primer_modelo.escala_predeterminada)
+        self.var_denoise = ctk.IntVar(value=-1)
 
-        # Configuración de modelos
-        self.modelos_disponibles = {
-            "realesr-animevideov3": [2, 3, 4],
-            "realesrgan-x4plus-anime": [4],
-            #"realesrgan-x4plus": [4],
-            #"ultrasharp": [4],
-            #"ultramix_balanced": [4],
-            #"remacri": [4],
-        }
-
-        # Configuración DnD si está disponible
+        # Configuracion DnD si esta disponible
         if using_dnd:
             self.drop_target_register(DND_FILES)
             self.dnd_bind('<<Drop>>', self._procesar_archivo_entrada)
@@ -126,7 +147,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         # Cabecera
         self._crear_cabecera()
 
-        # Área principal
+        # Area principal
         self._crear_area_principal()
 
         # Panel de control
@@ -139,14 +160,12 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         frame_cabecera = ctk.CTkFrame(self.panel_principal)
         frame_cabecera.pack(fill="x", padx=10, pady=(0, 10))
 
-        # Título principal
         ctk.CTkLabel(
             frame_cabecera,
             text="Mejorador de Video e Imagen IA Pro",
             font=("Roboto", 24, "bold")
         ).pack(side="left", pady=10, padx=10)
 
-        # Botón de ayuda
         ctk.CTkButton(
             frame_cabecera,
             text="?",
@@ -158,30 +177,26 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         frame_principal = ctk.CTkFrame(self.panel_principal)
         frame_principal.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Habilitar redimensionamiento en frame principal
         frame_principal.grid_rowconfigure(0, weight=1)
         frame_principal.grid_columnconfigure(0, weight=1)
 
-        # Área de selección de archivo
         self._crear_selector_archivo(frame_principal)
-
-        # Vista previa
         self._crear_vista_previa(frame_principal)
 
     def _crear_selector_archivo(self, parent):
         frame = ctk.CTkFrame(parent)
         frame.pack(fill="x", padx=5, pady=5)
-        # Etiqueta de archivo
+
         self.label_archivo = ctk.CTkLabel(
             frame,
             text="Arrastra y suelta un archivo o selecciona",
             font=("Roboto", 12)
         )
         self.label_archivo.pack(side="left", padx=10)
-        # Frame para botones
+
         frame_botones = ctk.CTkFrame(frame)
         frame_botones.pack(side="right", padx=5)
-        # Botón de selección
+
         self.boton_seleccionar = ctk.CTkButton(
             frame_botones,
             text="Seleccionar Archivo",
@@ -189,7 +204,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             width=150
         )
         self.boton_seleccionar.pack(side="left", padx=5)
-        # Botón de limpiar
+
         ctk.CTkButton(
             frame_botones,
             text="Limpiar",
@@ -204,17 +219,15 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         frame = ctk.CTkFrame(parent)
         frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Habilitar redimensionamiento en frame de vista previa
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
 
-        # Etiqueta de vista previa
         ctk.CTkLabel(
             frame,
             text="Vista Previa",
             font=("Roboto", 14, "bold")
         ).pack(pady=5)
-        # Canvas para vista previa
+
         self.canvas_preview = tk.Canvas(
             frame,
             bg="#1a1a1a",
@@ -227,41 +240,72 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
     def _crear_panel_control(self):
         frame = ctk.CTkFrame(self.panel_principal)
         frame.pack(fill="x", padx=10, pady=10)
-        # Frame izquierdo para opciones básicas
-        frame_izq = ctk.CTkFrame(frame)
-        frame_izq.pack(side="left", fill="x", expand=True, padx=5, pady=5)
-        # Checkbox para modo imagen
+
+        # Fila superior: checkbox + upscaler + modelo
+        frame_fila1 = ctk.CTkFrame(frame)
+        frame_fila1.pack(fill="x", padx=5, pady=(5, 2))
+
         ctk.CTkCheckBox(
-            frame_izq,
-            text="Solo procesar imágenes",
+            frame_fila1,
+            text="Solo imagenes",
             variable=self.solo_imagenes,
             command=self._actualizar_interfaz
         ).pack(side="left", padx=10)
-        # Frame derecho para controles avanzados
-        frame_der = ctk.CTkFrame(frame)
-        frame_der.pack(side="right", fill="x", expand=True, padx=5, pady=5)
-        # Selector de modelo
-        ctk.CTkLabel(frame_der, text="Modelo:").pack(side="left", padx=5)
+
+        ctk.CTkLabel(frame_fila1, text="Upscaler:").pack(side="left", padx=(20, 5))
+        upscaler_nombres = []
+        self._upscaler_display_map = {}
+        for uid in self.upscalers_instalados:
+            info = UPSCALERS[uid]
+            display = info.nombre_display
+            upscaler_nombres.append(display)
+            self._upscaler_display_map[display] = uid
+
+        self.selector_upscaler = ctk.CTkOptionMenu(
+            frame_fila1,
+            values=upscaler_nombres,
+            command=self._on_upscaler_changed,
+            width=180
+        )
+        self.selector_upscaler.pack(side="left", padx=5)
+        # Set initial display value
+        primer_uid = self.upscaler_var.get()
+        self.selector_upscaler.set(UPSCALERS[primer_uid].nombre_display)
+
+        ctk.CTkLabel(frame_fila1, text="Modelo:").pack(side="left", padx=(20, 5))
         self.selector_modelo = ctk.CTkOptionMenu(
-            frame_der,
-            values=list(self.modelos_disponibles.keys()),
-            variable=self.modelo_var,
-            command=self._actualizar_escalas,
-            width=200
+            frame_fila1,
+            values=[""],
+            command=self._on_modelo_changed,
+            width=180
         )
         self.selector_modelo.pack(side="left", padx=5)
-        # Selector de escala
-        ctk.CTkLabel(frame_der, text="Escala:").pack(side="left", padx=5)
+
+        # Fila inferior: escala + denoise + boton
+        frame_fila2 = ctk.CTkFrame(frame)
+        frame_fila2.pack(fill="x", padx=5, pady=(2, 5))
+
+        ctk.CTkLabel(frame_fila2, text="Escala:").pack(side="left", padx=(10, 5))
         self.selector_escala = ctk.CTkOptionMenu(
-            frame_der,
-            values=["2x", "3x", "4x"],
-            command=lambda x: self.var_escala.set(int(x[0])),
-            width=100
+            frame_fila2,
+            values=["2x"],
+            command=lambda x: self.var_escala.set(int(x.replace("x", ""))),
+            width=80
         )
         self.selector_escala.pack(side="left", padx=5)
-        # Botón de proceso
+
+        self.label_denoise = ctk.CTkLabel(frame_fila2, text="Ruido:")
+        self.label_denoise.pack(side="left", padx=(20, 5))
+        self.selector_denoise = ctk.CTkOptionMenu(
+            frame_fila2,
+            values=["-1 (auto)", "0", "1", "2", "3"],
+            command=lambda x: self.var_denoise.set(int(x.split()[0])),
+            width=100
+        )
+        self.selector_denoise.pack(side="left", padx=5)
+
         self.boton_mejorar = ctk.CTkButton(
-            frame_der,
+            frame_fila2,
             text="Iniciar Mejora",
             command=self._iniciar_proceso,
             state="disabled",
@@ -269,24 +313,122 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         )
         self.boton_mejorar.pack(side="right", padx=10)
 
+        # Inicializar dropdowns con el upscaler seleccionado
+        self._actualizar_modelos_dropdown()
+
+    def _on_upscaler_changed(self, display_name):
+        """Cuando el usuario cambia el upscaler."""
+        upscaler_id = self._upscaler_display_map.get(display_name)
+        if upscaler_id:
+            self.upscaler_var.set(upscaler_id)
+            self._actualizar_modelos_dropdown()
+
+    def _on_modelo_changed(self, display_name):
+        """Cuando el usuario cambia el modelo."""
+        upscaler_id = self.upscaler_var.get()
+        upscaler = UPSCALERS.get(upscaler_id)
+        if not upscaler:
+            return
+
+        # Encontrar modelo_id por nombre display
+        paths = self.upscalers_instalados.get(upscaler_id)
+        for modelo_id, modelo_info in upscaler.modelos.items():
+            if modelo_info.nombre_display == display_name and modelo_id in paths.ruta_modelos:
+                self.modelo_var.set(modelo_id)
+                self._actualizar_escalas_dropdown()
+                self._actualizar_denoise_visibilidad()
+                return
+
+    def _actualizar_modelos_dropdown(self):
+        """Actualiza el dropdown de modelos segun el upscaler seleccionado."""
+        upscaler_id = self.upscaler_var.get()
+        upscaler = UPSCALERS.get(upscaler_id)
+        paths = self.upscalers_instalados.get(upscaler_id)
+
+        if not upscaler or not paths:
+            return
+
+        # Solo mostrar modelos que tienen archivos instalados
+        modelos_disponibles = []
+        for modelo_id, modelo_info in upscaler.modelos.items():
+            if modelo_id in paths.ruta_modelos:
+                modelos_disponibles.append(modelo_info.nombre_display)
+
+        if modelos_disponibles:
+            self.selector_modelo.configure(values=modelos_disponibles)
+            self.selector_modelo.set(modelos_disponibles[0])
+            # Sync modelo_var
+            self._on_modelo_changed(modelos_disponibles[0])
+        else:
+            self.selector_modelo.configure(values=["Sin modelos"])
+            self.selector_modelo.set("Sin modelos")
+
+    def _actualizar_escalas_dropdown(self):
+        """Actualiza el dropdown de escalas segun el modelo seleccionado."""
+        upscaler_id = self.upscaler_var.get()
+        modelo_id = self.modelo_var.get()
+        upscaler = UPSCALERS.get(upscaler_id)
+
+        if not upscaler:
+            return
+
+        modelo_info = upscaler.modelos.get(modelo_id)
+        if not modelo_info:
+            return
+
+        escalas = modelo_info.escalas
+        self.selector_escala.configure(values=[f"{x}x" for x in escalas])
+        self.selector_escala.set(f"{modelo_info.escala_predeterminada}x")
+        self.var_escala.set(modelo_info.escala_predeterminada)
+
+    def _actualizar_denoise_visibilidad(self):
+        """Muestra/oculta el selector de denoise segun el modelo."""
+        upscaler_id = self.upscaler_var.get()
+        modelo_id = self.modelo_var.get()
+        upscaler = UPSCALERS.get(upscaler_id)
+
+        if not upscaler:
+            return
+
+        modelo_info = upscaler.modelos.get(modelo_id)
+        tiene_denoise = modelo_info and modelo_info.denoise_niveles is not None
+
+        if tiene_denoise:
+            niveles = modelo_info.denoise_niveles
+            valores_display = []
+            for n in niveles:
+                if n == -1:
+                    valores_display.append("-1 (auto)")
+                else:
+                    valores_display.append(str(n))
+            self.selector_denoise.configure(values=valores_display)
+            self.selector_denoise.set(valores_display[0])
+            self.var_denoise.set(niveles[0])
+            self.label_denoise.pack(side="left", padx=(20, 5))
+            self.selector_denoise.pack(side="left", padx=5)
+        else:
+            self.label_denoise.pack_forget()
+            self.selector_denoise.pack_forget()
+            self.var_denoise.set(-1)
+
     def _crear_barra_estado(self):
         frame = ctk.CTkFrame(self.panel_principal)
         frame.pack(fill="x", padx=10, pady=5)
-        # Frame para información del proceso
+
         frame_info = ctk.CTkFrame(frame)
         frame_info.pack(fill="x", padx=5, pady=5)
-        # Barra de progreso
+
         self.barra_progreso = ctk.CTkProgressBar(frame_info)
         self.barra_progreso.pack(fill="x", padx=5, pady=5)
         self.barra_progreso.set(0)
-        # Estado del proceso
+
         self.label_estado = ctk.CTkLabel(
             frame_info,
             text="Listo",
             font=("Roboto", 12)
         )
         self.label_estado.pack(pady=5)
-        # Información adicional
+
         self.label_info = ctk.CTkLabel(
             frame_info,
             text="",
@@ -295,16 +437,24 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
         self.label_info.pack(pady=2)
 
     def _mostrar_ayuda(self):
+        # Listar upscalers instalados
+        upscalers_txt = ""
+        for uid, paths in self.upscalers_instalados.items():
+            info = UPSCALERS[uid]
+            n_modelos = len(paths.ruta_modelos)
+            upscalers_txt += f"  - {info.nombre_display} ({n_modelos} modelos)\n"
+
         messagebox.showinfo("Ayuda",
             "Instrucciones de uso:\n\n"
             "1. Selecciona un archivo de video o imagen\n"
-            "2. Elige el modelo de mejora deseado\n"
-            "3. Ajusta la escala de mejora\n"
-            "4. Configura la calidad de salida\n"
-            "5. Presiona 'Iniciar Mejora'\n\n"
+            "2. Elige el upscaler y modelo deseado\n"
+            "3. Ajusta la escala (y nivel de ruido si aplica)\n"
+            "4. Presiona 'Iniciar Mejora'\n\n"
             "Formatos soportados:\n"
             "- Videos: MP4, AVI, MKV, MOV\n"
-            "- Imágenes: PNG, JPG, JPEG, BMP, WEBP"
+            "- Imagenes: PNG, JPG, JPEG, BMP, WEBP\n\n"
+            f"Upscalers instalados:\n{upscalers_txt}\n"
+            "Para agregar mas upscalers, consulte bin/LEEME.txt"
         )
 
     def _limpiar_seleccion(self):
@@ -323,7 +473,6 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             self.archivo_seleccionado = archivo
             self._actualizar_interfaz()
             self._mostrar_vista_previa()
-            # Mostrar información del archivo
             self._mostrar_info_archivo()
 
     def _validar_archivo(self, archivo):
@@ -335,11 +484,11 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
     def _mostrar_info_archivo(self):
         if not self.archivo_seleccionado:
             return
-        path = Path(self.archivo_seleccionado)
         size = os.path.getsize(self.archivo_seleccionado) / (1024 * 1024)  # MB
         if self.solo_imagenes.get():
             img = Image.open(self.archivo_seleccionado)
-            info = f"Tamaño: {size:.1f}MB | Dimensiones: {img.size[0]}x{img.size[1]}"
+            info = f"Tamano: {size:.1f}MB | Dimensiones: {img.size[0]}x{img.size[1]}"
+            img.close()
         else:
             cap = cv2.VideoCapture(self.archivo_seleccionado)
             fps = cap.get(cv2.CAP_PROP_FPS)
@@ -348,7 +497,7 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             cap.release()
-            info = f"Tamaño: {size:.1f}MB | Dimensiones: {width}x{height} | FPS: {fps:.1f} | Duración: {duration:.1f}s"
+            info = f"Tamano: {size:.1f}MB | Dimensiones: {width}x{height} | FPS: {fps:.1f} | Duracion: {duration:.1f}s"
         self.label_info.configure(text=info)
 
     def _mostrar_vista_previa(self):
@@ -359,11 +508,11 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
                 cap = cv2.VideoCapture(self.archivo_seleccionado)
                 ret, frame = cap.read()
                 if not ret:
-                    raise Exception("No se pudo leer el archivo de video")
+                    raise RuntimeError("No se pudo leer el archivo de video")
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 imagen = Image.fromarray(frame)
                 cap.release()
-            # Ajustar tamaño y mostrar
+            # Ajustar tamano y mostrar
             w, h = imagen.size
             ratio = min(800/w, 400/h)
             imagen = imagen.resize((int(w*ratio), int(h*ratio)), Image.Resampling.LANCZOS)
@@ -372,56 +521,70 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             self.canvas_preview.create_image(400, 200, image=foto)
             self.canvas_preview.image = foto
         except Exception as e:
-            messagebox.showerror("Error", f"Error al cargar la vista previa: {str(e)}")
+            messagebox.showerror("Error", f"Error al cargar la vista previa: {e}")
+
+    def _obtener_rutas_actuales(self):
+        """Retorna (ruta_exe, ruta_modelos) para la seleccion actual de upscaler/modelo."""
+        upscaler_id = self.upscaler_var.get()
+        modelo_id = self.modelo_var.get()
+        paths = self.upscalers_instalados.get(upscaler_id)
+
+        if not paths:
+            return None, None
+
+        ruta_exe = paths.ruta_exe
+        ruta_modelos = paths.ruta_modelos.get(modelo_id)
+
+        return ruta_exe, ruta_modelos
 
     def _procesar_video(self, directorio_salida):
+        upscaler_id = self.upscaler_var.get()
+        modelo_id = self.modelo_var.get()
+        ruta_exe, ruta_modelos = self._obtener_rutas_actuales()
+
         directorio_temp = os.path.join(directorio_salida, "temp_frames")
         os.makedirs(directorio_temp, exist_ok=True)
-        self.archivo_salida = os.path.join(directorio_salida,
-                                    f"{Path(self.archivo_seleccionado).stem}_mejorado.mp4")
+        archivo_salida = os.path.join(
+            directorio_salida,
+            f"{Path(self.archivo_seleccionado).stem}_mejorado.mp4"
+        )
         try:
-            # Proceso secuencial de video
-            self.label_estado.configure(text="Extrayendo frames...")
-            extraer_frames(self.archivo_seleccionado, directorio_temp,
-                        self.barra_progreso, self.after)
-            
-            self.label_estado.configure(text="Mejorando frames...")
+            self._update_status("Extrayendo frames...")
+            extraer_frames(self.archivo_seleccionado, directorio_temp)
+
+            self._update_status("Mejorando frames...")
             mejorar_frames(
                 directorio_temp=directorio_temp,
-                ruta_realesrgan=self.realesrgan_path,
-                ruta_modelos=self.models_path,
-                barra_progreso=self.barra_progreso,
+                ruta_exe=ruta_exe,
+                ruta_modelos=ruta_modelos,
                 escala=self.var_escala.get(),
-                modelo=self.modelo_var.get()
+                upscaler_id=upscaler_id,
+                modelo_id=modelo_id,
+                denoise=self.var_denoise.get(),
             )
-            
-            self.label_estado.configure(text="Creando video final...")
+
+            self._update_status("Creando video final...")
             convertir_frames_a_video(
-                self.archivo_seleccionado, 
-                self.archivo_salida,
-                directorio_temp, 
-                self.barra_progreso, 
-                self.finalizar_mejora
+                self.archivo_seleccionado,
+                archivo_salida,
+                directorio_temp
             )
+
+            self._update_status("Mejora finalizada")
+
         except Exception as e:
-            self._handle_error(str(e))
+            raise
         finally:
             shutil.rmtree(directorio_temp, ignore_errors=True)
-            
+
     def _configurar_interfaz_proceso(self, habilitado: bool):
         estado = "normal" if habilitado else "disabled"
         for widget in [self.boton_mejorar, self.boton_seleccionar,
-                    self.selector_modelo, self.selector_escala]:
+                    self.selector_upscaler, self.selector_modelo,
+                    self.selector_escala, self.selector_denoise]:
             widget.configure(state=estado)
         self.barra_progreso.set(0 if habilitado else 1)
         self.label_estado.configure(text="Listo" if habilitado else "Procesando...")
-
-    def _actualizar_escalas(self, *args):
-        modelo = self.modelo_var.get()
-        escalas = self.modelos_disponibles.get(modelo, [2])
-        self.selector_escala.configure(values=[f"{x}x" for x in escalas])
-        self.selector_escala.set(f"{escalas[0]}x")
-        self.var_escala.set(escalas[0])
 
     def _actualizar_interfaz(self):
         self.boton_mejorar.configure(state="normal" if self.archivo_seleccionado else "disabled")
@@ -430,21 +593,20 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             else "Arrastra y suelta un archivo o selecciona")
 
     def _iniciar_proceso(self):
-        # Asegurarse de que las rutas sean correctas
-        modelo_path = os.path.abspath(self.realesrgan_path)
-        models_path = os.path.abspath(self.models_path)
+        ruta_exe, ruta_modelos = self._obtener_rutas_actuales()
 
-        # Verificar que los archivos existen
-        if not os.path.exists(modelo_path):
-            messagebox.showerror("Error", f"No se encuentra el ejecutable en: {modelo_path}")
+        if not ruta_exe or not os.path.exists(ruta_exe):
+            messagebox.showerror("Error", f"No se encuentra el ejecutable: {ruta_exe}")
             return
 
-        if not os.path.exists(models_path):
-            messagebox.showerror("Error", f"No se encuentra el directorio de modelos en: {models_path}")
+        if not ruta_modelos or not os.path.exists(ruta_modelos):
+            messagebox.showerror("Error", f"No se encuentra el directorio de modelos: {ruta_modelos}")
             return
-        directorio_salida = filedialog.askdirectory(title="Seleccionar ubicación de salida")
+
+        directorio_salida = filedialog.askdirectory(title="Seleccionar ubicacion de salida")
         if not directorio_salida:
             return
+
         self.is_processing = True
         self._configurar_interfaz_proceso(False)
 
@@ -452,75 +614,31 @@ class AplicacionMejoradorVideo(ctk.CTk if not using_dnd else TkinterDnD.Tk):
             self.run_in_background(
                 target=self._procesar_imagen,
                 args=(directorio_salida,),
-                callback=lambda _: messagebox.showinfo("Éxito", "Proceso completado exitosamente")
+                callback=lambda *_: messagebox.showinfo("Exito", "Imagen mejorada exitosamente")
             )
         else:
             self.run_in_background(
                 target=self._procesar_video,
                 args=(directorio_salida,),
-                callback=lambda _: messagebox.showinfo("Éxito", "Proceso completado exitosamente")
+                callback=lambda *_: messagebox.showinfo("Exito", "Video mejorado exitosamente")
             )
-            
+
     def _procesar_imagen(self, directorio_salida):
-        archivo_salida = os.path.join(directorio_salida, f"{Path(self.archivo_seleccionado).stem}_mejorado.png")
-        try:
-            mejorar_imagen(
-                self.archivo_seleccionado, 
-                archivo_salida, 
-                self.realesrgan_path, 
-                self.models_path, 
-                self.var_escala.get(), 
-                self.modelo_var.get()
-            )
-            messagebox.showinfo("Éxito", f"Imagen mejorada guardada en:\n{archivo_salida}")
-        except Exception as e:
-            self._handle_error(str(e))
-            
-    def iniciar_mejora(self):
-        try:
-            # Lógica para procesar y mejorar imágenes
-            self.procesar_frames()
-        except Exception as e:
-            print(f"Error durante la mejora: {e}")
-        finally:
-            # Llamar al método 'finalizar_mejora'
-            self.finalizar_mejora()
+        upscaler_id = self.upscaler_var.get()
+        modelo_id = self.modelo_var.get()
+        ruta_exe, ruta_modelos = self._obtener_rutas_actuales()
 
-    def procesar_frames(self):
-        # Aquí se realiza el procesamiento de los frames
-        print("Procesando frames...")
-        # Simular que el procesamiento ocurre correctamente
-        self.frames_mejorados = ["frame1.png", "frame2.png"]  # Ejemplo
-
-        # Generar video después de procesar
-        self.generar_video_mejorado()
-
-    def generar_video_mejorado(self):
-        try:
-            if not self.frames_mejorados:
-                raise ValueError("No hay frames mejorados para generar el video.")
-
-            # Lógica para combinar los frames en un video
-            print("Generando video mejorado...")
-            self.video_generado = True
-        except Exception as e:
-            print(f"Error al generar el video: {e}")
-
-    def finalizar_mejora(self):
-        # Método que se llama al finalizar todo el proceso
-        ruta_video = getattr(self, 'archivo_salida', 'Video no generado')
-        
-        mensaje_exito = f"""
-    Proceso de Mejora Completado ✅
-    --------------------------------
-    Archivo de salida: {ruta_video}
-    Modelo utilizado: {self.modelo_var.get()}
-    Escala de mejora: {self.var_escala.get()}x
-        """
-        
-        # Actualizar label de estado con mensaje de éxito
-        self.label_estado.configure(text="Mejora finalizada con éxito")
-        
-        # Opcional: mostrar mensaje de éxito
-        messagebox.showinfo("Proceso Completado", mensaje_exito)
-        self._end_processing()
+        archivo_salida = os.path.join(
+            directorio_salida,
+            f"{Path(self.archivo_seleccionado).stem}_mejorado.png"
+        )
+        mejorar_imagen(
+            self.archivo_seleccionado,
+            archivo_salida,
+            ruta_exe,
+            ruta_modelos,
+            self.var_escala.get(),
+            upscaler_id=upscaler_id,
+            modelo_id=modelo_id,
+            denoise=self.var_denoise.get(),
+        )

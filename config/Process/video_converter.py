@@ -1,117 +1,164 @@
-import logging, cv2, os, glob, gc, torch
-from moviepy import VideoFileClip, ImageSequenceClip
-from .video_processor import ProcesadorVideo
-from config.config import Configuracion
+# video_converter.py
+import logging
+import os
+import subprocess
+
+import cv2
+
+from config.gpu_manager import GestorGPU
 
 logger = logging.getLogger(__name__)
 
-def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp, barra_progreso=None, 
-                            callback_finalizar=None, verbose=False, tipo_contenido="general"):
-    """
-    Convierte los frames mejorados en un video manteniendo el audio original con mejoras en manejo de errores y recursos.
-    
-    Mejoras implementadas:
-    - Gestión robusta de recursos
-    - Manejo detallado de errores
-    - Optimización de procesamiento de video
-    
-    Args:
-        archivo_entrada (str): Ruta del video original
-        archivo_salida (str): Ruta del video de salida
-        directorio_temp (str): Directorio con los frames mejorados
-        barra_progreso (optional): Objeto para actualizar progreso
-        callback_finalizar (optional): Función a llamar al finalizar
-        verbose (optional): Modo detallado para más información de logging
-        tipo_contenido (str): Tipo de contenido para seleccionar el modelo adecuado
-    """
-    video_original = None
-    clip = None
-    clip_final = None
 
+def _encontrar_ffmpeg():
+    """Busca el ejecutable ffmpeg - primero en bin/, luego en PATH del sistema."""
+    # Buscar en carpeta bin/ relativa al proyecto
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    ffmpeg_local = os.path.join(project_root, 'bin', 'ffmpeg.exe')
+    if os.path.isfile(ffmpeg_local):
+        return ffmpeg_local
+
+    # Fallback a PATH del sistema
     try:
-        # Configuración de logging mejorada
-        logging.getLogger('moviepy').setLevel(logging.ERROR)
-        logger.setLevel(logging.DEBUG if verbose else logging.INFO)
-
-        # Validación de archivos de entrada
-        if not os.path.exists(archivo_entrada):
-            raise FileNotFoundError(f"El archivo de video de entrada no existe: {archivo_entrada}")
-
-        # Obtener lista de imágenes mejoradas con manejo de errores
-        imagenes = sorted(glob.glob(os.path.join(directorio_temp, "enhanced_frame_*.png")))
-        if not imagenes:
-            raise FileNotFoundError("No se encontraron imágenes mejoradas para procesar")
-
-        # Obtención de metadatos de video con manejo de errores
-        cap = cv2.VideoCapture(archivo_entrada)
-        if not cap.isOpened():
-            raise Exception(f"No se pudo abrir el archivo de video: {archivo_entrada}")
-        
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        cap.release()
-        
-        clip = ImageSequenceClip(imagenes, fps=fps)
-        
-        video_original = VideoFileClip(archivo_entrada)
-        if video_original.audio is not None:
-            clip = clip.with_audio(video_original.audio)
-            clip = clip.with_duration(video_original.audio.duration)
-        
-        configuracion_codec = ProcesadorVideo.obtener_codec_optimal()
-
-        # Ajustar el número de hilos de procesamiento
-        num_hilos = min(Configuracion.MAXIMO_HILOS, os.cpu_count())
-        
-        clip.write_videofile(
-            archivo_salida,
-            codec=configuracion_codec['codec'],
-            audio_codec='aac',
-            threads=num_hilos  # Ajustar los hilos de procesamiento
+        result = subprocess.run(
+            ['ffmpeg', '-version'],
+            capture_output=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
-        
-        clip.close()
-        video_original.close()
-        
-        if barra_progreso:
-            barra_progreso.set(0.9)
-        if callback_finalizar:
-            callback_finalizar()
-        logging.info(f"Video generado exitosamente: {archivo_salida}")
+        if result.returncode == 0:
+            return 'ffmpeg'
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
 
-    except Exception as error_general:
-        logging.error(f"Error crítico en procesamiento de video: {error_general}")
-        raise
-    
-    finally:
-        # Liberación segura y exhaustiva de recursos
-        def liberar_recurso(recurso):
-            try:
-                if recurso:
-                    recurso.close()
-            except Exception as error_recurso:
-                logging.warning(f"Error liberando recurso: {error_recurso}")
+    return None
 
-        liberar_recurso(clip)
-        liberar_recurso(video_original)
-        liberar_recurso(clip_final)
-        
-        # Gestión de memoria optimizada
-        gc.collect()
-        
-        # Limpieza de memoria de GPU
-        if torch.cuda.is_available():
-            try:
-                with torch.cuda.device('cuda'):
-                    torch.cuda.empty_cache()
-            except Exception as error_gpu:
-                logging.warning(f"Error limpiando caché de GPU: {error_gpu}")
 
-# Configuración de logging global con mejoras
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('aplicacion.log', encoding='utf-8', mode='a')
+def _detectar_encoder_hw(ffmpeg_path):
+    """
+    Detecta el mejor encoder HW disponible segun el fabricante de GPU.
+    Retorna (nombre_encoder, lista_params_extra).
+    """
+    gpu = GestorGPU.verificar_compatibilidad_gpu()
+
+    encoders = {
+        'NVIDIA': ('h264_nvenc', ['-preset', 'p7', '-rc', 'constqp', '-qp', '18']),
+        'AMD':    ('h264_amf',   ['-quality', 'quality']),
+        'Intel':  ('h264_qsv',   ['-preset', 'veryslow']),
+    }
+
+    if gpu in encoders:
+        encoder, params = encoders[gpu]
+        # Verificar que el encoder existe en ffmpeg
+        try:
+            result = subprocess.run(
+                [ffmpeg_path, '-hide_banner', '-encoders'],
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            if encoder in result.stdout:
+                logger.info(f"Usando encoder HW: {encoder}")
+                return encoder, params
+        except Exception:
+            pass
+
+    logger.info("Usando encoder software: libx264")
+    return 'libx264', ['-preset', 'slow', '-crf', '18']
+
+
+def convertir_frames_a_video(archivo_entrada, archivo_salida, directorio_temp,
+                              barra_progreso=None, callback_finalizar=None):
+    """
+    Ensambla frames mejorados en un video preservando el audio original.
+    Usa FFmpeg directamente en lugar de moviepy.
+    """
+    ffmpeg = _encontrar_ffmpeg()
+    if not ffmpeg:
+        raise FileNotFoundError(
+            "FFmpeg no encontrado. Coloque ffmpeg.exe en la carpeta bin/ "
+            "o instalelo en el PATH del sistema."
+        )
+
+    # Obtener FPS del video original
+    cap = cv2.VideoCapture(archivo_entrada)
+    if not cap.isOpened():
+        raise RuntimeError(f"No se pudo abrir el video original: {archivo_entrada}")
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+
+    if fps <= 0:
+        fps = 30.0
+        logger.warning(f"FPS no detectado, usando valor por defecto: {fps}")
+
+    # Detectar mejor encoder
+    encoder, encoder_params = _detectar_encoder_hw(ffmpeg)
+
+    # Construir comando FFmpeg
+    frame_pattern = os.path.join(directorio_temp, 'enhanced_frame_%08d.png')
+
+    comando = [
+        ffmpeg, '-y',
+        '-framerate', str(fps),
+        '-i', frame_pattern,
+        '-i', archivo_entrada,
+        '-map', '0:v',          # video de los frames
+        '-map', '1:a?',         # audio del original (si existe)
+        '-c:v', encoder,
+        *encoder_params,
+        '-c:a', 'copy',         # copiar audio sin re-encodear
+        '-pix_fmt', 'yuv420p',  # maxima compatibilidad
+        '-movflags', '+faststart',
+        archivo_salida
     ]
-)
+
+    logger.info(f"Ejecutando FFmpeg: {' '.join(comando)}")
+
+    proceso = subprocess.Popen(
+        comando,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        creationflags=subprocess.CREATE_NO_WINDOW
+    )
+
+    stdout, stderr = proceso.communicate(timeout=600)
+
+    if proceso.returncode != 0:
+        # Si el encoder HW fallo, reintentar con libx264
+        if encoder != 'libx264':
+            logger.warning(f"Encoder {encoder} fallo, reintentando con libx264")
+            comando_fallback = [
+                ffmpeg, '-y',
+                '-framerate', str(fps),
+                '-i', frame_pattern,
+                '-i', archivo_entrada,
+                '-map', '0:v',
+                '-map', '1:a?',
+                '-c:v', 'libx264',
+                '-preset', 'slow', '-crf', '18',
+                '-c:a', 'copy',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                archivo_salida
+            ]
+            proceso2 = subprocess.Popen(
+                comando_fallback,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            stdout2, stderr2 = proceso2.communicate(timeout=600)
+            if proceso2.returncode != 0:
+                raise RuntimeError(f"FFmpeg fallo: {stderr2}")
+        else:
+            raise RuntimeError(f"FFmpeg fallo: {stderr}")
+
+    if not os.path.exists(archivo_salida):
+        raise FileNotFoundError(f"FFmpeg no genero el archivo de salida: {archivo_salida}")
+
+    logger.info(f"Video generado exitosamente: {archivo_salida}")
+
+    if barra_progreso:
+        barra_progreso.set(0.95)
+    if callback_finalizar:
+        callback_finalizar()

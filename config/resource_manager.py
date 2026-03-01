@@ -1,49 +1,34 @@
-#resource_manager
-import psutil, gc, time, torch, logging
-from .config import Configuracion
-
+# resource_manager.py
+import gc
+import logging
+import psutil
 
 logger = logging.getLogger(__name__)
 
+
 class GestorRecursos:
     @staticmethod
-    def monitorear_memoria():
-        """
-        Monitorea el uso de memoria y libera recursos si se supera el umbral configurado.
-        """
-        while True:
-            memoria_virtual = psutil.virtual_memory()
-            if memoria_virtual.percent > Configuracion.UMBRAL_MEMORIA:
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                time.sleep(Configuracion.INTERVALO_MONITOREO)
-            time.sleep(Configuracion.INTERVALO_MONITOREO)
+    def obtener_uso_memoria():
+        """Retorna el porcentaje de uso de memoria del sistema."""
+        return psutil.virtual_memory().percent
 
     @staticmethod
-    def verificar_uso_recursos():
-        """
-        Verifica el uso de CPU y memoria, y espera si se supera el umbral configurado.
-        """
-        while True:
-            uso_cpu = psutil.cpu_percent(interval=0.1)
-            uso_memoria = psutil.virtual_memory().percent
-            if uso_cpu > Configuracion.MAXIMO_USO_CPU or uso_memoria > Configuracion.UMBRAL_MEMORIA:
-                time.sleep(Configuracion.INTERVALO_VERIFICACION)
-                gc.collect()
-            time.sleep(Configuracion.INTERVALO_VERIFICACION)
-    
+    def obtener_uso_cpu():
+        """Retorna el porcentaje de uso de CPU."""
+        return psutil.cpu_percent(interval=0.1)
+
     @staticmethod
-    def monitorear_gpu():
-        """
-        Monitorea el uso de GPU y libera recursos si se supera el umbral configurado.
-        """
-        if torch.cuda.is_available():
-            while True:
-                for i in range(torch.cuda.device_count()):
-                    gpu_mem = torch.cuda.memory_reserved(i)
-                    gpu_total = torch.cuda.get_device_properties(i).total_memory
-                    if gpu_mem / gpu_total > Configuracion.UMBRAL_MEMORIA_GPU / 100:
-                        torch.cuda.empty_cache()
-                        time.sleep(Configuracion.INTERVALO_MONITOREO)
-                time.sleep(Configuracion.INTERVALO_MONITOREO)
+    def liberar_memoria():
+        """Fuerza garbage collection para liberar memoria no usada."""
+        gc.collect()
+        logger.debug("Memoria liberada via gc.collect()")
+
+    @staticmethod
+    def verificar_recursos_disponibles(umbral_memoria=90):
+        """Verifica si el sistema tiene suficientes recursos para continuar."""
+        mem = psutil.virtual_memory().percent
+        if mem > umbral_memoria:
+            gc.collect()
+            logger.warning(f"Uso de memoria alto: {mem}%")
+            return False
+        return True

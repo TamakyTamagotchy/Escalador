@@ -1,5 +1,4 @@
-#main.py
-from ui_pruebas import AplicacionMejoradorVideo
+# main.py
 import logging
 
 logging.basicConfig(
@@ -11,9 +10,12 @@ logging.basicConfig(
     ]
 )
 
-if __name__ == "__main__":
-    logging.info('Aplicación iniciada')
+logger = logging.getLogger(__name__)
 
+from ui_pruebas import AplicacionMejoradorVideo
+
+if __name__ == "__main__":
+    logger.info('Aplicacion iniciada')
     app = AplicacionMejoradorVideo()
     app.mainloop()
-    logging.info('Aplicación finalizada')
+    logger.info('Aplicacion finalizada')

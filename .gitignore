@@ -14,3 +14,6 @@ dist/
 tests/
 .cache/
 .venv/
+bin/
+# Ignorar archivos específicos
+convertir_modelo.py
