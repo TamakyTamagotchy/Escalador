@@ -1,0 +1,16 @@
+# Ignorar archivos temporales
+*.pyc
+__pycache__/
+*.log
+*.txt
+*.bat
+*.json
+*.exe
+*.bin
+
+# Ignorar una carpeta específica
+build/
+dist/
+tests/
+.cache/
+.venv/
