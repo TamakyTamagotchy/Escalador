@@ -1,7 +1,5 @@
 # models_config.py
-import logging
-import os
-import re
+import logging, os, re
 from pathlib import Path
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
@@ -222,10 +220,12 @@ def construir_comando(
     hilos: Optional[str] = None,
 ) -> List[str]:
     """Construye la lista de argumentos CLI segun el tipo de upscaler."""
-    ruta_exe = os.path.normpath(ruta_exe)
-    entrada = os.path.normpath(entrada)
-    salida = os.path.normpath(salida)
-    ruta_modelos = os.path.normpath(ruta_modelos)
+    # Resolver rutas a absolutas para que funcionen correctamente
+    # independientemente del CWD del subproceso
+    ruta_exe = os.path.abspath(ruta_exe)
+    entrada = os.path.abspath(entrada)
+    salida = os.path.abspath(salida)
+    ruta_modelos = os.path.abspath(ruta_modelos)
 
     cmd = [ruta_exe, "-i", entrada, "-o", salida, "-s", str(escala)]
 

@@ -8,11 +8,8 @@ from config.models_config import UPSCALERS, detectar_modelos_ncnn
 
 logger = logging.getLogger(__name__)
 
-# Raiz del proyecto es el directorio que contiene este archivo
-PROJECT_ROOT = Path(__file__).resolve().parent
-
-# Rutas de binarios relativas a la raiz del proyecto
-BIN_DIR = PROJECT_ROOT / "bin"
+# Rutas relativas a la raiz del proyecto (CWD se establece en main_pruebas.py)
+BIN_DIR = Path("bin")
 EXECUTABLE_PATH = BIN_DIR / "realesrgan-ncnn-vulkan.exe"
 MODELS_PATH = BIN_DIR / "models"
 

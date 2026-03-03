@@ -1,6 +1,5 @@
 # config.py
-import os
-import psutil
+import os, psutil
 from dataclasses import dataclass
 
 

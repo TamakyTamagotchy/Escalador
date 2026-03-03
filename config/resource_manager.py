@@ -1,7 +1,5 @@
 # resource_manager.py
-import gc
-import logging
-import psutil
+import gc, psutil, logging
 
 logger = logging.getLogger(__name__)
 

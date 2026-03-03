@@ -1,10 +1,5 @@
 # frame_processor.py
-import glob
-import logging
-import os
-import subprocess
-
-import cv2
+import glob, logging, os, subprocess, cv2
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config.models_config import construir_comando

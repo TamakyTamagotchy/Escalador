@@ -3,11 +3,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
-import cv2
-import os
-import threading
-import shutil
-import logging
+import cv2, os, threading, logging,shutil
 from queue import Queue, Empty
 from pathlib import Path
 from prueba_config import detectar_upscalers_instalados

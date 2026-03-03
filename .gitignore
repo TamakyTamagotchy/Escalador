@@ -15,5 +15,7 @@ tests/
 .cache/
 .venv/
 bin/
+Dliax.egg-info/
 # Ignorar archivos específicos
 convertir_modelo.py
+setup.py

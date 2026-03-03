@@ -12,11 +12,10 @@ logger = logging.getLogger(__name__)
 
 def _encontrar_ffmpeg():
     """Busca el ejecutable ffmpeg - primero en bin/, luego en PATH del sistema."""
-    # Buscar en carpeta bin/ relativa al proyecto
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    ffmpeg_local = os.path.join(project_root, 'bin', 'ffmpeg.exe')
+    # Buscar en carpeta bin/ relativa al proyecto (CWD es la raiz del proyecto)
+    ffmpeg_local = os.path.join('bin', 'ffmpeg.exe')
     if os.path.isfile(ffmpeg_local):
-        return ffmpeg_local
+        return os.path.abspath(ffmpeg_local)
 
     # Fallback a PATH del sistema
     try:

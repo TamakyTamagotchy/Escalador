@@ -1,6 +1,5 @@
 # gpu_manager.py
-import subprocess
-import logging
+import subprocess, logging
 
 logger = logging.getLogger(__name__)
 
